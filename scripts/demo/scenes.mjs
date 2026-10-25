@@ -672,4 +672,71 @@ export const SCENES = [
       return true;
     },
   },
+
+  // ------------------------------------------------------------------ 10. one weight edit, end to end
+  {
+    name: "10-adjust-weights",
+    setup: async () => { await window.demo.reset({ view: "scanner", run: "", revert: true, clearEdits: true, clearChecks: true, action: "ablate", step: "Record" }); return true; },
+    script: async () => {
+      const d = window.demo, q = d.q;
+      await d.title("Adjust a model's weights", "Find what writes a word, change those weights, and measure what changed", 3400);
+      await d.say("Ask the model something.", "", "top");
+      const answer = await d.ask(q("#view-scanner .composer"), d.CAPITAL);
+      await d.say(`“${answer}”`, "Which parts of the model wrote “Canberra”?", "top");
+      await d.click(d.next());
+      await d.until(() => d.word("Canberra"), 30000, "Canberra in Trace");
+      await d.click(d.word("Canberra"));
+      await d.until(() => q("#an-detail .routes li[data-i]"), 120000, "routes");
+      await d.sleep(1000);
+      const stats = [...document.querySelectorAll("#an-detail .d-stats b")].map((b) => b.textContent);
+      await d.say(`“Canberra”: probability ${stats[0]}. Every head and neuron group is colored by what it did to this word.`,
+        "Find paths traces the strongest routes into it.", "top");
+      await d.click(d.tool("Find paths"));
+      await d.until(() => q("#gv-path-list li"), 30000, "paths");
+      await d.sleep(1600);
+      await d.click(d.next());
+      await d.cap("Test first: knock out every unit on those paths and read the word again.", "Nothing changes in the weights yet.", "top");
+      await d.click(d.tool("Knock out path units"));
+      await d.until(() => q("#tp-ko-list li .ko-nums"), 120000, "path knockout");
+      await d.sleep(800);
+      const li = q("#tp-ko-list li");
+      await d.say(`${li.querySelector(".ko-head b").innerText}: ${d.koNums(li)}.`, `Most likely now: ${d.mostLikely(li)}.`, "top");
+      await d.click(d.next());
+      await d.cap("Now change the weights: keep that test as a weight edit.", "", "top");
+      await d.click(d.tool("Make permanent"));
+      await d.until(() => q("#tp-ko-list .pill.ok"), 120000, "permanent");
+      await d.sleep(1200);
+      await d.say("The weights are edited, and the edit is recorded in the stack.", "Restore original undoes it exactly.", "top");
+      await d.click(d.next());
+      await d.cap("Ask the same question on the original and the edited weights.", "", "top");
+      await d.click(d.tool("Re-run the chat"));
+      await d.until(() => q("#gv-edits .rp-card"), 180000, "replay");
+      await d.sleep(800);
+      await d.move(q("#gv-edits .rp-card"));
+      const cols = [...document.querySelectorAll("#gv-edits .rp-cols p")].map((p) => p.innerText.trim());
+      await d.say(`Original: “${d.short(cols[0])}”`, `Edited: “${d.short(cols[1])}”`, "top");
+      document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "workbench" }));
+      await d.sleep(1200);
+      const ta = q("#wb-prompts");
+      await d.move(ta);
+      await d.cap("Did anything else change? Run unrelated prompts on both weights.", "", "top");
+      await d.click(ta);
+      await d.type(ta, "Write one sentence about rain.", 30);
+      d.set(q("#wb-max"), "40");
+      await d.click(q("#wb-run"));
+      await d.until(() => q("#wb-metrics .tile"), 180000, "comparison");
+      await d.sleep(800);
+      await d.move(q("#wb-metrics"));
+      const kl = [...document.querySelectorAll("#wb-metrics .tile")].find((t) => /KL/.test(t.innerText));
+      await d.say("How far the edited model drifted on text the edit had nothing to do with.",
+        kl ? `KL ${kl.querySelector(".value").innerText} nats per token.` : "", "top");
+      await d.move(q("#wb-export"));
+      await d.say("Export saves the edited model as a Hugging Face checkpoint, with every edit recorded.", "", "top");
+      await d.api("POST", "/llminspect/workbench/revert", {});
+      document.dispatchEvent(new CustomEvent("llminspect:workbench"));
+      await d.sleep(800);
+      await d.title("LLMInspect", "Adjust open-weights models, and see what changed", 3400);
+      return true;
+    },
+  },
 ];
