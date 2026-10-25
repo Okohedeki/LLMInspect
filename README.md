@@ -7,6 +7,8 @@ use it as a drop-in model. While the model works, LLMInspect records what happen
 token. You can then see why it wrote what it wrote, steer it while it runs, and edit its weights
 and measure what changed.
 
+LLMInspect was ported from Brainscan, the project's earlier private repository.
+
 ## What it can do
 
 - **Record.** Every token gets a readout: its probability and surprisal, the top alternatives,
