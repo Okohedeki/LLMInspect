@@ -1,0 +1,2 @@
+# The code runs inside WSL; keep LF everywhere so shell scripts work after a Windows checkout.
+* text=auto eol=lf

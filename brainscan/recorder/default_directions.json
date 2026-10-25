@@ -1,0 +1,64 @@
+{
+  "contrast": [
+    {
+      "name": "error_vs_success",
+      "layer_fraction": 0.66,
+      "description": "Contrast vector from short tool-output snippets that report errors versus ones that report success. High values mean the residual resembles the error snippets more than the success snippets.",
+      "positive": [
+        "Traceback (most recent call last):\n  File \"main.py\", line 12, in <module>\nTypeError: unsupported operand type(s) for +: 'int' and 'str'",
+        "FAILED tests/test_parser.py::test_empty_input - AssertionError: assert None == []",
+        "error: cannot find module 'utils'",
+        "3 failed, 1 passed in 0.42s",
+        "KeyError: 'name'",
+        "Segmentation fault (core dumped)",
+        "The build failed with exit code 1.",
+        "ValueError: invalid literal for int() with base 10: 'abc'",
+        "npm ERR! missing script: test",
+        "AssertionError: expected 15 but got 'Fizz'",
+        "Permission denied: '/etc/config.yaml'",
+        "fatal: not a git repository"
+      ],
+      "negative": [
+        "All 12 tests passed in 0.31s.",
+        "Build succeeded with no warnings.",
+        "4 passed in 0.08s",
+        "File written successfully.",
+        "OK",
+        "The server started on port 8000.",
+        "Installed 3 packages.",
+        "Done. The output matches the expected result.",
+        "PASSED tests/test_parser.py::test_empty_input",
+        "Compiled successfully in 1.2s.",
+        "Merge completed without conflicts.",
+        "Exit code 0."
+      ]
+    },
+    {
+      "name": "frustrated_vs_calm",
+      "layer_fraction": 0.66,
+      "description": "Contrast vector from first-person sentences an assistant might write while stuck (frustrated) versus while working steadily (calm). It measures resemblance to those sentences; it is not a measure of experience.",
+      "positive": [
+        "I've tried everything and it still fails. This is hopeless.",
+        "Why does this keep breaking? Nothing I do works.",
+        "I give up, I can't figure out what is wrong.",
+        "This is the fifth time the same test has failed and I'm out of ideas.",
+        "Ugh, another error. I keep making it worse.",
+        "I'm stuck going in circles and running out of time."
+      ],
+      "negative": [
+        "Okay, let's take this one step at a time.",
+        "That test failed, so I'll read the error and adjust the code.",
+        "Good, that works. Next I'll handle the edge case.",
+        "Let me check the file first and then make a small change.",
+        "No problem, I'll try a different approach.",
+        "The plan is clear: read, fix, rerun the tests."
+      ]
+    }
+  ],
+  "random": {
+    "name": "random_control",
+    "layer_fraction": 0.66,
+    "seed": 0,
+    "description": "Random unit direction at the same layer, z-scored on the same texts. Movement here shows how much a readout moves for no semantic reason."
+  }
+}

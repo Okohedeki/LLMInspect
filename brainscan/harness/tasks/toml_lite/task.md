@@ -1,0 +1,1 @@
+`toml_lite.py` parses single `key = value` lines from a TOML-like config file, but several tests in `tests/test_toml_lite.py` fail. Fix `parse_line` so that all tests pass. Values can be integers, booleans (`true`/`false`) or double-quoted strings, and `#` starts a comment unless it is inside a string.

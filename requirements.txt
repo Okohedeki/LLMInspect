@@ -1,0 +1,15 @@
+transformers
+accelerate
+gguf
+safetensors
+fastapi[standard]
+uvicorn
+pyarrow
+numpy
+openai
+pytest
+nnsight
+sentencepiece
+protobuf
+psutil
+nvidia-ml-py

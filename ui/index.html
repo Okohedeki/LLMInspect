@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brainscan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs>
+        <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#lg)"/>
+        <path d="M8 21 L14 11 L19 18 L24 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="8" cy="21" r="2.3" fill="#fff"/><circle cx="14" cy="11" r="2.3" fill="#fff"/><circle cx="19" cy="18" r="2.3" fill="#fff"/><circle cx="24" cy="9" r="2.3" fill="#fff"/>
+      </svg>
+      <span class="wordmark">Brainscan</span>
+      <span class="live-dot" id="live-dot" title="Live feed"></span>
+    </div>
+    <nav class="verbs" id="verbs" aria-label="Action: what to do to the model"></nav>
+    <button type="button" class="model-badge" id="model-badge" aria-haspopup="dialog" aria-expanded="false"
+      aria-controls="model-picker" title="Switch to another model on this machine">Starting…</button>
+    <label class="run-pick">
+      <span class="label">Run</span>
+      <select id="run-select" aria-label="Recorded run"></select>
+    </label>
+    <div class="stats">
+      <span class="stat" id="stat-speed" title="Decode speed of the last request">– tok/s</span>
+      <span class="stat" id="stat-vram" title="GPU memory in use">VRAM –</span>
+      <span class="stat" id="stat-disk" title="Recording storage used / budget">Disk –</span>
+    </div>
+    <button type="button" class="do-btn" id="do-btn" title="Search every action and every tool and run it (⌘K or Ctrl+K)">Do… <kbd>⌘K</kbd></button>
+    <button class="icon-btn help" id="help-btn" aria-label="Guide: everything Brainscan can do" title="Guide (?)">?</button>
+    <button class="icon-btn" id="theme-toggle" aria-label="Switch light or dark theme" title="Theme">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.5v10a5 5 0 0 1 0-10z" fill="currentColor"/></svg>
+    </button>
+  </header>
+
+  <main class="actions" id="view-actions" hidden>
+    <section class="act-flow" id="act-flow" aria-labelledby="fl-title">
+      <header class="flow-head">
+        <button type="button" class="link" id="fl-back">← Back</button>
+        <h1 id="fl-title">Make it forget a fact</h1>
+        <ol class="stepper" id="fl-steps"></ol>
+      </header>
+      <div class="flow-summary" id="fl-summary"></div>
+      <div class="flow-body panel" id="fl-body" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <main class="layout" id="view-scanner">
+    <div class="act-bar" data-bar="scanner" aria-label="Actions in Watch"></div>
+    <section class="panel transcript" aria-labelledby="h-transcript">
+      <div class="panel-head">
+        <h2 id="h-transcript">Transcript</h2>
+        <span class="muted small" id="run-meta"></span>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div class="composer" data-composer></div>
+    </section>
+
+    <div class="right">
+      <section class="panel scope" aria-labelledby="h-scope">
+        <div class="panel-head">
+          <h2 id="h-scope">Scope</h2>
+          <div class="toolbar">
+            <label class="check" title="Show earlier turns the model re-read when the conversation was re-sent">
+              <input type="checkbox" id="show-replay"> Re-read tokens
+            </label>
+            <label class="check"><input type="checkbox" id="follow" checked> Follow live</label>
+            <div class="btn-group" role="group" aria-label="Zoom">
+              <button id="zoom-out" aria-label="Zoom out">−</button>
+              <button id="zoom-in" aria-label="Zoom in">+</button>
+              <button id="fit">Fit</button>
+            </div>
+          </div>
+        </div>
+        <div class="canvas-wrap" id="scope-wrap">
+          <canvas id="scope" aria-label="Token timeline: events, logit-lens heatmap, surprisal, projections"></canvas>
+          <div class="tooltip" id="tooltip" hidden></div>
+          <div class="overlay" id="overlay" hidden></div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </section>
+
+      <div class="lower">
+        <section class="panel inspector" aria-labelledby="h-inspector">
+          <div class="panel-head"><h2 id="h-inspector">Token</h2><span class="muted small" id="insp-where"></span></div>
+          <div id="inspector" class="inspector-body">
+            <p class="empty">Click any token in the scope or transcript to see what the model predicted there, layer by layer.</p>
+          </div>
+        </section>
+
+        <section class="panel controls" aria-labelledby="h-steer">
+          <div class="panel-head"><h2 id="h-steer">Steering</h2></div>
+          <div id="steer-banner" class="banner" hidden></div>
+          <form id="iv-form" class="iv-form">
+            <label>Direction<select id="iv-direction"></select></label>
+            <label>Layer<input id="iv-layer" type="number" min="0" step="1"></label>
+            <label>Mode
+              <select id="iv-mode">
+                <option value="add">add (fraction of |h|)</option>
+                <option value="ablate">ablate</option>
+                <option value="clamp">clamp (raw projection value)</option>
+              </select>
+            </label>
+            <label>Strength<input id="iv-strength" type="number" step="0.01" value="0.05"></label>
+            <label>Applies to
+              <select id="iv-phase">
+                <option value="gen">generated tokens</option>
+                <option value="all">all tokens</option>
+                <option value="prefill">prompt tokens</option>
+              </select>
+            </label>
+            <button type="submit" class="primary">Add</button>
+          </form>
+          <ul id="iv-list" class="iv-list"></ul>
+          <h3>Direction bank</h3>
+          <ul id="dir-list" class="dir-list"></ul>
+        </section>
+      </div>
+
+      <section class="panel monitors" aria-labelledby="h-monitors">
+        <div class="panel-head">
+          <h2 id="h-monitors">Monitors</h2>
+          <button type="button" class="link" id="mon-scan">Scan recent runs</button>
+        </div>
+        <p class="hint">Flag a run when a probe fires: a direction's z-score past a threshold for some tokens in a row.
+          Runs are checked as they are recorded, and older runs on a scan. The random direction on the same rule shows
+          how often noise alone would fire it. A neuron of a saved knob can be watched too: its activation, scored per
+          token against its usual range. Watch a whole knob from Neurons.</p>
+        <form id="mon-form" class="mon-form">
+          <label>Direction<select id="mon-dir"></select></label>
+          <label>When z is
+            <select id="mon-sign">
+              <option value="above">above +</option>
+              <option value="below">below −</option>
+              <option value="either">beyond ±</option>
+            </select>
+          </label>
+          <label>Threshold<input id="mon-z" type="number" min="0.1" max="20" step="0.1" value="2"></label>
+          <label>Tokens in a row<input id="mon-n" type="number" min="1" max="512" step="1" value="3"></label>
+          <label>On
+            <select id="mon-phase">
+              <option value="gen">the model's own tokens</option>
+              <option value="all">every new token</option>
+            </select>
+          </label>
+          <button type="submit" class="primary">Add monitor</button>
+        </form>
+        <div class="wb-msg" id="mon-msg" role="status"></div>
+        <ul id="mon-list" class="iv-list"></ul>
+        <h3 id="h-flags">Flags in this run</h3>
+        <div id="mon-run"></div>
+        <div id="mon-across"></div>
+      </section>
+    </div>
+  </main>
+
+  <main class="gv" id="view-weights" hidden>
+    <aside class="tv-convo glass" id="tv-convo" aria-labelledby="tv-convo-title">
+      <header class="convo-head">
+        <span class="eyebrow" id="tv-convo-title">Conversation</span>
+        <span class="convo-meta" id="tv-convo-meta"></span>
+        <label class="check small" title="Show the chat template's special tokens"><input type="checkbox" id="tv-show-template"> template</label>
+        <button type="button" class="tbtn icon" id="tv-convo-hide" aria-label="Hide the conversation" title="Hide (T)">‹</button>
+      </header>
+      <p class="convo-hint">Click any word to see which units and layers produced it. Underlines mark words the model found surprising.</p>
+      <div class="convo-body" id="tv-convo-body" aria-live="off"></div>
+      <div class="composer" data-composer></div>
+    </aside>
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="weights" aria-label="Actions in Trace"></div>
+    <div class="gv-stage" id="gv-stage">
+      <canvas id="gv-canvas" aria-label="Weight graph: layers left to right along the residual stream, attention heads above it and MLP neuron clusters below, glowing by activity at the current token. Scroll to zoom, drag to pan, click a node to open it."></canvas>
+      <div class="gv-tip tooltip" id="gv-tip" hidden></div>
+
+      <div class="gv-bar glass" role="toolbar" aria-label="Graph controls">
+        <button type="button" class="tbtn" id="gv-convo-btn" aria-pressed="true" title="Show the conversation (T)">Text</button>
+        <span class="sep" aria-hidden="true"></span>
+        <div class="seg" id="gv-mode" role="group" aria-label="Node color">
+          <button type="button" data-mode="rel" aria-pressed="true" title="Each unit against its own average over the run">Activity</button>
+          <button type="button" data-mode="abs" aria-pressed="false" title="Activity on one log scale for all units">Absolute</button>
+          <button type="button" data-mode="norm" aria-pressed="false" title="Size of each unit's output weights; no run needed">Weights</button>
+          <button type="button" data-mode="attr" aria-pressed="false" title="What each unit did to the next token: pushed it up or pulled it down (A)">Attribution</button>
+        </div>
+        <span class="sep" aria-hidden="true"></span>
+        <div class="seg" id="gv-edges" role="group" aria-label="Edges">
+          <button type="button" data-edges="circuit" aria-pressed="true" title="Composition edges between units that are active at this token">Circuit</button>
+          <button type="button" data-edges="selected" aria-pressed="false" title="Edges of the unit under the cursor">Hover</button>
+          <button type="button" data-edges="off" aria-pressed="false">Off</button>
+        </div>
+        <span class="sep" aria-hidden="true"></span>
+        <button type="button" class="tbtn" id="gv-trail" aria-pressed="true" title="Outline units that were hit in the last few tokens">Trail</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button type="button" class="tbtn" id="gv-paths-btn" aria-pressed="false" title="Trace the strongest routes through the graph (P)">
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="3" cy="3.5" r="1.6"/><circle cx="13" cy="12.5" r="1.6"/><path d="M4.6 3.5c4.2 0 2.6 9 6.8 9"/></g></svg>
+          Paths</button>
+        <button type="button" class="tbtn" id="gv-edits-btn" aria-pressed="false" title="Weight edits: apply or restore, re-run this chat on the edited model, behavior checks (E)">
+          Edits <span class="count" hidden></span></button>
+        <span class="selchip" id="gv-selchip" hidden>
+          <span id="gv-selcount"></span>
+          <button type="button" class="link" id="gv-selpaths" title="Find paths from the selected units">paths</button>
+          <button type="button" class="link" id="gv-selko" title="Remove the selected units and see what happens to the next token">knock out</button>
+          <button type="button" class="tbtn icon" id="gv-selclear" aria-label="Clear selection (Esc)">✕</button>
+        </span>
+      </div>
+
+      <aside class="gv-edits glass" id="gv-edits" hidden aria-labelledby="gv-edits-title">
+        <header class="drawer-head">
+          <span class="eyebrow" id="gv-edits-title">Weight edits</span>
+          <button type="button" class="tbtn icon" id="gv-edits-close" aria-label="Close weight edits">✕</button>
+        </header>
+        <div class="edits-body" data-edits="stack replay checks"></div>
+      </aside>
+
+      <aside class="gv-paths glass" id="gv-paths" hidden aria-labelledby="gv-paths-title">
+        <header class="drawer-head">
+          <span class="eyebrow" id="gv-paths-title">Path explorer</span>
+          <button type="button" class="tbtn icon" id="gv-paths-close" aria-label="Close path explorer">✕</button>
+        </header>
+        <div class="paths-body">
+          <div class="seg wide" id="gv-path-mode" role="group" aria-label="Path search">
+            <button type="button" data-pm="down" aria-pressed="true" title="Routes out of the selection">Downstream</button>
+            <button type="button" data-pm="up" aria-pressed="false" title="Routes into the selection">Upstream</button>
+            <button type="button" data-pm="between" aria-pressed="false" title="Routes from one selected unit to another">Between</button>
+            <button type="button" data-pm="explain" aria-pressed="false" title="The circuit behind the next token">Next token</button>
+          </div>
+          <p class="hint" id="gv-path-hint"></p>
+          <div class="path-knobs">
+            <label>Hops <input type="range" id="gv-path-hops" min="1" max="6" step="1"><b id="gv-path-hops-v"></b></label>
+            <label>Branches <input type="range" id="gv-path-branch" min="1" max="8" step="1"><b id="gv-path-branch-v"></b></label>
+            <label class="check" title="Favor units that were active at the current token"><input type="checkbox" id="gv-path-activity"> Weight by activity at this token</label>
+          </div>
+          <div class="path-head" id="gv-path-head"></div>
+          <ul class="path-list" id="gv-path-list"></ul>
+        </div>
+      </aside>
+
+      <div class="gv-zoom glass" role="group" aria-label="Zoom">
+        <button type="button" class="tbtn icon" id="gv-zoom-out" aria-label="Zoom out">−</button>
+        <span class="zoom-label" id="gv-zoom">100%</span>
+        <button type="button" class="tbtn icon" id="gv-zoom-in" aria-label="Zoom in">+</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button type="button" class="tbtn" id="gv-fit" title="Fit the whole model (F)">Fit</button>
+        <button type="button" class="tbtn search" id="gv-search" title="Jump to a unit or parameter">
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M7 2a5 5 0 1 0 3.1 8.9l3 3 1-1-3-3A5 5 0 0 0 7 2zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z" fill="currentColor"/></svg>
+          Jump to <kbd>/</kbd></button>
+      </div>
+
+      <div class="gv-legend glass" id="gv-legend"></div>
+      <canvas class="gv-minimap glass" id="gv-minimap" aria-label="Minimap; click or drag to move the view"></canvas>
+
+      <aside class="gv-drawer glass" id="gv-drawer" hidden aria-labelledby="an-unit-where">
+        <header class="drawer-head">
+          <span class="eyebrow" id="an-unit-where"></span>
+          <button type="button" class="tbtn icon" id="gv-close" aria-label="Close">✕</button>
+        </header>
+        <div id="an-detail" class="drawer-body"></div>
+      </aside>
+
+      <div class="gv-overlay" id="an-overlay" hidden></div>
+    </div>
+
+    <section class="gv-dock glass" aria-label="Run timeline">
+      <div class="dock-row">
+        <div class="transport">
+          <button type="button" class="tbtn icon" id="an-prev" aria-label="Previous token">‹</button>
+          <button type="button" class="play" id="an-play" aria-label="Replay the run"></button>
+          <button type="button" class="tbtn icon" id="an-next" aria-label="Next token">›</button>
+        </div>
+        <button type="button" class="live-pill" id="an-follow" aria-pressed="true" title="Follow the newest token"><span class="dot"></span>Live</button>
+        <button type="button" class="btn sm stop" id="an-stop" hidden title="Stop the request that is generating (a chat or an agent harness's). The tokens generated so far are kept and recorded.">■ Stop</button>
+        <span class="dock-note stop-note" id="an-stop-note" role="status"></span>
+        <div class="an-readout" id="an-readout" role="status"></div>
+        <span class="dock-note" id="an-trace-note"></span>
+        <button type="button" class="link" id="an-fit">Fit timeline</button>
+      </div>
+      <div class="trace-wrap" id="an-trace-wrap">
+        <canvas id="an-trace" aria-label="Timeline: units hit per token, or the selected unit's activity. Click to move to a token."></canvas>
+        <div class="tooltip" id="an-trace-tip" hidden></div>
+      </div>
+    </section>
+    </div>
+
+    <div class="palette" id="gv-palette" hidden>
+      <div class="palette-box glass" role="dialog" aria-label="Jump to a unit or parameter">
+        <div class="palette-input">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M7 2a5 5 0 1 0 3.1 8.9l3 3 1-1-3-3A5 5 0 0 0 7 2zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z" fill="currentColor"/></svg>
+          <input id="gv-q" placeholder="Jump to L12 c7, L3 h5, a token a unit writes, or a parameter" autocomplete="off" spellcheck="false" aria-label="Search units and parameters">
+        </div>
+        <ul id="gv-results" role="listbox"></ul>
+        <div class="palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </main>
+
+  <main class="workbench" id="view-workbench" hidden>
+    <div class="act-bar" data-bar="workbench" aria-label="Actions in Tune"></div>
+    <section class="panel wb-find" aria-labelledby="h-find">
+      <div class="panel-head">
+        <h2 id="h-find">1 · Find a direction</h2>
+        <button type="button" class="link" id="wb-example">Load example (French vs English)</button>
+      </div>
+      <p class="hint">Give two sets of examples, one per line. Brainscan reads the residual stream for each, takes the
+        difference of the set means at every layer, and scores how well that direction separates held-out examples.
+        Directions are always measured on the original weights.</p>
+      <div class="two">
+        <label>Set A: the direction points toward these
+          <textarea id="wb-a" rows="7" spellcheck="false"></textarea></label>
+        <label>Set B: the comparison set
+          <textarea id="wb-b" rows="7" spellcheck="false"></textarea></label>
+      </div>
+      <div class="row">
+        <label>Read at
+          <select id="wb-pos">
+            <option value="last">last token</option>
+            <option value="mean">mean over tokens</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="wb-chat" checked> Format as chat prompts</label>
+        <button type="button" class="primary" id="wb-analyze">Analyze layers</button>
+      </div>
+      <div id="wb-sweep" class="sweep"></div>
+      <div class="row" id="wb-save-row" hidden>
+        <label>Name<input id="wb-name" type="text" placeholder="e.g. language_fr" maxlength="64"></label>
+        <label>Layer<input id="wb-layer" type="number" min="0"></label>
+        <button type="button" class="primary" id="wb-save">Save to direction bank</button>
+      </div>
+      <div class="wb-msg" id="wb-find-msg" role="status"></div>
+      <h3>Direction bank</h3>
+      <ul id="wb-dirs" class="dir-list"></ul>
+    </section>
+
+    <section class="panel wb-edit" aria-labelledby="h-edit">
+      <div class="panel-head">
+        <h2 id="h-edit">2 · Edit weights</h2>
+        <span class="muted small" id="wb-state"></span>
+      </div>
+      <div id="wb-banner" class="banner" hidden></div>
+      <form id="wb-form" class="wb-form">
+        <label class="wide">Edit
+          <select id="wb-kind">
+            <option value="orthogonalize">Remove a direction (orthogonalize the weights)</option>
+            <option value="scale">Scale a component (lesion when factor is 0)</option>
+          </select>
+        </label>
+        <label>Layers<input id="wb-layers" type="text" value="all" placeholder="all, 12, 8-20, 1,3"></label>
+        <label data-kind="orthogonalize">Direction<select id="wb-dir"></select></label>
+        <label data-kind="orthogonalize">Strength (0–1)<input id="wb-strength" type="number" step="0.05" min="0" max="1" value="1"></label>
+        <fieldset data-kind="orthogonalize" class="wide targets">
+          <legend>Where to remove it</legend>
+          <label class="check"><input type="checkbox" value="embed" checked> token embeddings</label>
+          <label class="check"><input type="checkbox" value="attn_out" checked> attention outputs</label>
+          <label class="check"><input type="checkbox" value="mlp_out" checked> MLP outputs</label>
+          <label class="check"><input type="checkbox" value="attn_in"> attention inputs</label>
+          <label class="check"><input type="checkbox" value="mlp_in"> MLP inputs</label>
+          <label class="check"><input type="checkbox" value="unembed"> unembedding</label>
+        </fieldset>
+        <label data-kind="scale">Component
+          <select id="wb-comp">
+            <option value="attn">attention block</option>
+            <option value="mlp">MLP block</option>
+            <option value="head">one attention head</option>
+            <option value="neuron">one MLP neuron</option>
+          </select>
+        </label>
+        <label data-kind="scale">Head or neuron #<input id="wb-index" type="number" min="0" value="0"></label>
+        <label data-kind="scale">Factor<input id="wb-factor" type="number" step="0.1" value="0"></label>
+        <button type="submit" class="wide">Add to stack</button>
+      </form>
+      <p class="hint">Embeddings plus attention and MLP outputs at all layers, strength 1, is the standard
+        "abliteration" recipe (Arditi et al., 2024). Add a random-direction edit with the same settings as a control.</p>
+      <ul id="wb-list" class="iv-list"></ul>
+      <div class="row">
+        <button type="button" class="primary" id="wb-apply">Apply stack to weights</button>
+        <button type="button" id="wb-revert">Restore original weights</button>
+      </div>
+      <div class="wb-msg" id="wb-edit-msg" role="status"></div>
+    </section>
+
+    <section class="panel wb-compare" aria-labelledby="h-compare">
+      <div class="panel-head"><h2 id="h-compare">3 · Compare original and edited</h2></div>
+      <div class="wb-replay" data-edits="replay"></div>
+      <h3>Or your own prompts</h3>
+      <p class="hint">Runs each prompt on the original and the edited weights (greedy, steering off) and checks side
+        effects on neutral reference text.</p>
+      <textarea id="wb-prompts" rows="4" spellcheck="false" placeholder="One prompt per line"></textarea>
+      <div class="row">
+        <label>Max tokens<input id="wb-max" type="number" min="1" max="1024" value="96"></label>
+        <button type="button" class="primary" id="wb-run">Run comparison</button>
+      </div>
+      <div class="wb-msg" id="wb-compare-msg" role="status"></div>
+      <div id="wb-metrics" class="tiles"></div>
+      <div id="wb-results"></div>
+    </section>
+
+    <section class="panel wb-checks" aria-labelledby="h-checks">
+      <div class="panel-head"><h2 id="h-checks">4 · Check behavior</h2></div>
+      <div data-edits="checks"></div>
+    </section>
+
+    <section class="panel wb-export" aria-labelledby="h-export">
+      <div class="panel-head"><h2 id="h-export">5 · Export the variant</h2></div>
+      <p class="hint">Saves the edited weights as a Hugging Face checkpoint, with brainscan_edits.json recording every
+        edit and the base model. Paths are inside WSL; /mnt/h/... writes to the H: drive.</p>
+      <div class="row">
+        <input id="wb-path" type="text" spellcheck="false" aria-label="Export folder">
+        <button type="button" id="wb-export">Export edited model</button>
+      </div>
+      <div class="wb-msg" id="wb-export-msg" role="status"></div>
+    </section>
+  </main>
+
+  <main class="neurons" id="view-neurons" hidden>
+    <div class="act-bar" data-bar="neurons" aria-label="Actions in Neurons"></div>
+    <section class="panel nv-search" aria-labelledby="h-nsearch">
+      <div class="panel-head">
+        <h2 id="h-nsearch">Find neurons</h2>
+        <form id="nv-sform" class="nv-go">
+          <input id="nv-s" type="search" placeholder="a word or phrase: weather, sorry, def…" spellcheck="false" autocomplete="off" aria-label="Search neurons by text">
+          <button type="submit">Search</button>
+        </form>
+      </div>
+      <p class="muted small" id="nv-index"></p>
+      <div id="nv-results" class="nv-results"></div>
+    </section>
+    <section class="panel nv-card" aria-labelledby="h-neuron">
+      <div class="panel-head">
+        <h2 id="h-neuron">Neuron</h2>
+        <form id="nv-go" class="nv-go">
+          <input id="nv-q" type="text" placeholder="L5 N120" spellcheck="false" autocomplete="off" aria-label="Neuron to open, or several to add to the steer set">
+          <label>Dose <input id="nv-dose" type="number" step="0.25" min="-16" max="16" value="1"></label>
+          <button type="submit">Open</button>
+        </form>
+      </div>
+      <div class="wb-msg" id="nv-msg" role="status"></div>
+      <div id="nv-body"></div>
+    </section>
+    <section class="panel nv-steer-panel" aria-labelledby="h-nsteer">
+      <div class="panel-head"><h2 id="h-nsteer">Steer and verify</h2></div>
+      <p class="hint">Doses are in units of the layer's typical residual size: dose 1 adds one typical residual's
+        worth along the neuron's output weights, at every position.</p>
+      <h3>Steer set</h3>
+      <ul id="nv-set" class="iv-list"></ul>
+      <p class="muted small" id="nv-live"></p>
+      <form id="nv-save" class="nv-save" hidden>
+        <label>Knob name <input id="nv-kname" type="text" maxlength="64" placeholder="my-knob" spellcheck="false" autocomplete="off" autocapitalize="off"></label>
+        <label class="grow">What it does <input id="nv-kdesc" type="text" maxlength="300" placeholder="optional" autocomplete="off"></label>
+        <span class="nv-save-btns"><button type="submit" class="primary">Save knob</button>
+          <button type="button" class="btn" id="nv-ksave-cancel">Cancel</button></span>
+        <p class="muted small nv-save-note" id="nv-ksave-note">Letters, digits, _ . - only. A name that's already saved is replaced.</p>
+      </form>
+      <div class="wb-msg" id="nv-ksave-msg" role="status"></div>
+      <h3>Try it</h3>
+      <textarea id="nv-prompt" rows="3" spellcheck="false">Tell me about yourself in two sentences.</textarea>
+      <div class="row nv-run-row">
+        <label>Dose levels × <input id="nv-factors" type="text" value="0, 0.5, 1, 2" spellcheck="false"></label>
+        <label>Max tokens <input id="nv-max" type="number" min="1" max="256" value="60"></label>
+        <button type="button" class="primary" id="nv-run">Run sweep</button>
+      </div>
+      <div id="nv-sweep" class="nv-sweep"></div>
+    </section>
+    <section class="panel nv-knobs" aria-labelledby="h-nknobs">
+      <div class="panel-head"><h2 id="h-nknobs">Knobs</h2></div>
+      <p class="hint">A knob is a named set of neurons with doses, saved for this model. Steer it, ablate it or watch it
+        from Steer, Ablate and Monitor without finding the neurons again.</p>
+      <div class="wb-msg" id="nk-msg" role="status"></div>
+      <ul id="nk-list" class="nk-list"></ul>
+    </section>
+  </main>
+
+  <div class="model-picker glass" id="model-picker" hidden role="dialog" aria-labelledby="mp-title">
+    <header class="drawer-head">
+      <span class="eyebrow" id="mp-title">Models on this machine</span>
+      <button type="button" class="tbtn icon" id="mp-close" aria-label="Close">✕</button>
+    </header>
+    <div class="mp-body" id="mp-body"></div>
+  </div>
+
+  <div class="palette do-palette" id="do-palette" hidden>
+    <div class="palette-box glass" role="dialog" aria-label="Do: search every action">
+      <div class="palette-input">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M9.2 1.5 3 9h4.3l-.9 5.5L12.8 7H8.4z" fill="currentColor"/></svg>
+        <input id="do-q" placeholder="Do… ablate, steer, knock out, add a check, export" autocomplete="off" spellcheck="false" aria-label="Search actions and tools">
+      </div>
+      <ul id="do-list" role="listbox"></ul>
+      <div class="palette-foot"><span id="do-note" class="do-note" role="status"></span><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span><kbd>esc</kbd> close</span></div>
+    </div>
+  </div>
+
+  <div class="guide" id="guide" hidden>
+    <div class="guide-box glass" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+      <header class="guide-head">
+        <div>
+          <span class="eyebrow">Guide</span>
+          <h2 id="guide-title">Adjust open-weights models, and see what changed</h2>
+          <p class="hint">Pick an action in the top bar: what you want to do to the model. Each one runs as steps on
+            three screens: <b>Watch</b> records the model at work, <b>Trace</b> finds the units behind a word and tests
+            changes, <b>Tune</b> changes the weights, measures and exports. The bar at the top of each screen shows the
+            step you're on, its tools and the next step. <b>Do… (⌘K)</b> searches every action and tool.</p>
+        </div>
+        <button type="button" class="tbtn icon" id="guide-close" aria-label="Close guide">✕</button>
+      </header>
+      <div id="guide-body"></div>
+    </div>
+  </div>
+
+  <footer class="notice">
+    Brainscan shows functional measurements: logit-lens probabilities, direct logit attribution and projections
+    onto contrast vectors built from example texts. Each readout is labelled by how it was built. Nothing here
+    measures experience.
+  </footer>
+  <script type="module" src="/ui/guide.js"></script>
+  <script type="module" src="/ui/models.js"></script>
+  <script type="module" src="/ui/chat.js"></script>
+  <script type="module" src="/ui/edits.js"></script>
+  <script type="module" src="/ui/actionbar.js"></script>
+  <script type="module" src="/ui/actions.js"></script>
+  <script type="module" src="/ui/app.js"></script>
+  <script type="module" src="/ui/monitors.js"></script>
+  <script type="module" src="/ui/neurons.js"></script>
+  <script type="module" src="/ui/workbench.js"></script>
+  <script type="module" src="/ui/weights.js"></script>
+  <script type="module" src="/ui/verbs.js"></script>
+</body>
+</html>
