@@ -1,8 +1,8 @@
 """The neuron index: where every MLP neuron fires most across a text corpus, and what its write
 pushes, cached per model, so neurons can be found by text.
 
-Corpus: BRAINSCAN_CORPUS (a .txt, .md or .jsonl file, or a folder of them; jsonl rows carry a
-"text" field) when it is set, else the starter corpus bundled with Brainscan (starter_corpus.py:
+Corpus: LLMINSPECT_CORPUS (a .txt, .md or .jsonl file, or a folder of them; jsonl rows carry a
+"text" field) when it is set, else the starter corpus bundled with LLMInspect (starter_corpus.py:
 short texts across many topics and registers), every recorded run's messages (deduplicated), the
 calibration texts, and then any such files in <data>/corpus/ (scripts/fetch_corpus.py puts a sample
 of web text there). The texts are joined into one token stream and read in windows of WINDOW tokens,
@@ -93,12 +93,12 @@ def read_texts(files: list[Path]) -> list[tuple[str, str]]:
 
 def corpus_texts(recorder) -> tuple[list[tuple[str, str]], list[str]]:
     """(source, text) pairs, and a line per source saying where they came from."""
-    path = os.environ.get("BRAINSCAN_CORPUS", "").strip()
+    path = os.environ.get("LLMINSPECT_CORPUS", "").strip()
     if path:
         files = text_files(Path(path).expanduser())
         if not files:
-            raise ValueError(f"BRAINSCAN_CORPUS has no .txt, .md or .jsonl files: {path}")
-        return read_texts(files), [f"BRAINSCAN_CORPUS: {len(files)} file{'' if len(files) == 1 else 's'} under {path}"]
+            raise ValueError(f"LLMINSPECT_CORPUS has no .txt, .md or .jsonl files: {path}")
+        return read_texts(files), [f"LLMINSPECT_CORPUS: {len(files)} file{'' if len(files) == 1 else 's'} under {path}"]
     texts = [(f"starter:{topic}", text) for topic, text in STARTER]
     seen, runs = set(), []
     for meta in recorder.store.list_runs():

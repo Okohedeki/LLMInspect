@@ -13,19 +13,19 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import neurons as nmod
-from brainscan.recorder.capture import LayerTap
-from brainscan.recorder.graphs import DecodeGraphs
-from brainscan.recorder.knobs import KnobBank
-from brainscan.recorder.model import Subject
-from brainscan.recorder.monitors import MAX_MONITORS, Monitor, MonitorBank, scan, scan_run
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
-from brainscan.recorder.workbench import REFERENCE_TEXTS, _reference_ids
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import neurons as nmod
+from llminspect.recorder.capture import LayerTap
+from llminspect.recorder.graphs import DecodeGraphs
+from llminspect.recorder.knobs import KnobBank
+from llminspect.recorder.model import Subject
+from llminspect.recorder.monitors import MAX_MONITORS, Monitor, MonitorBank, scan, scan_run
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
+from llminspect.recorder.workbench import REFERENCE_TEXTS, _reference_ids
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 ASK = [{"role": "user", "content": "Describe the weather in three words."}]
 
 
@@ -298,13 +298,13 @@ def test_a_neuron_rule_reads_nz_and_a_direction_rule_reads_proj(tmp_path):
 
 def test_the_monitor_endpoints_name_a_neuron_as_they_name_a_direction(rec, client):
     for bad in ("L99 N0", "L2 N999999", "nope", ""):
-        assert client.post("/brainscan/monitors", json={"direction": bad}).status_code == 400
-    m = client.post("/brainscan/monitors", json={"direction": "l2/n7", "threshold": 3}).json()
+        assert client.post("/llminspect/monitors", json={"direction": bad}).status_code == 400
+    m = client.post("/llminspect/monitors", json={"direction": "l2/n7", "threshold": 3}).json()
     assert m["direction"] == "L2 N7" and m["kind"] == "neuron" and m["rule"].startswith("L2 N7 z ≥ 3")
     assert rec.watch is not None and rec.watch.labels == ["L2 N7"]
-    assert client.patch(f"/brainscan/monitors/{m['id']}", json={"enabled": False}).json()["enabled"] is False
+    assert client.patch(f"/llminspect/monitors/{m['id']}", json={"enabled": False}).json()["enabled"] is False
     assert rec.watch is None
-    assert client.delete(f"/brainscan/monitors/{m['id']}").json() == []
+    assert client.delete(f"/llminspect/monitors/{m['id']}").json() == []
 
 
 @pytest.mark.parametrize("chunk", [512, 4, 1])
@@ -544,74 +544,74 @@ def test_the_watch_inside_decode_graphs_matches_eager_decoding():
 
 
 def test_endpoints(rec, client):
-    assert client.get("/brainscan/knobs").json() == {"knobs": [], "error": None}
+    assert client.get("/llminspect/knobs").json() == {"knobs": [], "error": None}
     one = [{"neuron": "L2 N5", "dose": 1}, {"neuron": "L1 N3", "dose": -0.5}]
-    r = client.post("/brainscan/knobs", json={"name": "tone", "description": "test", "neurons": one})
+    r = client.post("/llminspect/knobs", json={"name": "tone", "description": "test", "neurons": one})
     assert r.status_code == 200 and r.json()["name"] == "tone" and r.json()["active"] == []
-    t = client.post("/brainscan/knobs", json={"name": "texty", "text": "L1 N3 +1, L2 N5 −0.5, L0 N7"}).json()
+    t = client.post("/llminspect/knobs", json={"name": "texty", "text": "L1 N3 +1, L2 N5 −0.5, L0 N7"}).json()
     assert [(n["neuron"], n["dose"]) for n in t["neurons"]] == [("L1 N3", 1.0), ("L2 N5", -0.5), ("L0 N7", 1.0)]
-    assert [k["name"] for k in client.get("/brainscan/knobs").json()["knobs"]] == ["tone", "texty"]
-    assert client.get("/brainscan/status").json()["knobs"] == ["tone", "texty"]
+    assert [k["name"] for k in client.get("/llminspect/knobs").json()["knobs"]] == ["tone", "texty"]
+    assert client.get("/llminspect/status").json()["knobs"] == ["tone", "texty"]
     for body in ({"name": "bad name", "neurons": one}, {"name": "x"}, {"name": "x", "neurons": []},
                  {"name": "x", "neurons": [{"neuron": "L2 N5", "dose": 0}]}, {"name": "x", "neurons": [{"neuron": "L99 N0"}]},
                  {"name": "x", "text": "no neurons here"}, {"name": "x", "neurons": one, "description": "d" * 301}):
-        assert client.post("/brainscan/knobs", json=body).status_code == 400, body
-    assert client.post("/brainscan/knobs", json=[1]).status_code == 400
-    assert client.post("/brainscan/knobs", content=b"{nope").status_code == 400
+        assert client.post("/llminspect/knobs", json=body).status_code == 400, body
+    assert client.post("/llminspect/knobs", json=[1]).status_code == 400
+    assert client.post("/llminspect/knobs", content=b"{nope").status_code == 400
 
     # steer: replaces, never stacks; a knob that is steering can't be deleted
-    steers = client.post("/brainscan/knobs/tone/steer", json={}).json()
+    steers = client.post("/llminspect/knobs/tone/steer", json={}).json()
     assert len(steers) == 2 and {s["knob"] for s in steers} == {"tone"}
-    knob = {k["name"]: k for k in client.get("/brainscan/knobs").json()["knobs"]}["tone"]
+    knob = {k["name"]: k for k in client.get("/llminspect/knobs").json()["knobs"]}["tone"]
     assert sorted(knob["active"]) == sorted(s["id"] for s in steers)
-    twice = client.post("/brainscan/knobs/tone/steer", json={"factor": 2, "phase": "gen"}).json()
-    assert len(client.get("/brainscan/interventions").json()) == 2
+    twice = client.post("/llminspect/knobs/tone/steer", json={"factor": 2, "phase": "gen"}).json()
+    assert len(client.get("/llminspect/interventions").json()) == 2
     assert [t["value"] for t in twice] == pytest.approx([2 * s["value"] for s in steers]) and {t["phase"] for t in twice} == {"gen"}
-    assert client.get("/brainscan/neurons").json()["steering"][0]["knob"] == "tone"
-    assert client.delete("/brainscan/knobs/tone").status_code == 409
+    assert client.get("/llminspect/neurons").json()["steering"][0]["knob"] == "tone"
+    assert client.delete("/llminspect/knobs/tone").status_code == 409
     for body in ({"factor": 99}, {"factor": "x"}, {"factor": None}, {"phase": "nope"}):
-        assert client.post("/brainscan/knobs/tone/steer", json=body).status_code == 400, body
-    assert client.post("/brainscan/knobs/nope/steer", json={}).status_code == 404
-    assert client.delete("/brainscan/knobs/nope/steer").status_code == 404
-    assert client.delete("/brainscan/knobs/tone/steer").json() == {"knob": "tone", "removed": 2}
-    assert client.delete("/brainscan/knobs/tone/steer").json()["removed"] == 0
-    assert client.get("/brainscan/interventions").json() == []
+        assert client.post("/llminspect/knobs/tone/steer", json=body).status_code == 400, body
+    assert client.post("/llminspect/knobs/nope/steer", json={}).status_code == 404
+    assert client.delete("/llminspect/knobs/nope/steer").status_code == 404
+    assert client.delete("/llminspect/knobs/tone/steer").json() == {"knob": "tone", "removed": 2}
+    assert client.delete("/llminspect/knobs/tone/steer").json()["removed"] == 0
+    assert client.get("/llminspect/interventions").json() == []
 
     # ablate: an edit that is added, not applied
-    e = client.post("/brainscan/knobs/tone/ablate", json={}).json()
+    e = client.post("/llminspect/knobs/tone/ablate", json={}).json()
     assert e["kind"] == "units" and e["factor"] == 0 and e["note"] == "L2 N5, L1 N3" and [u["g"] for u in e["units"]] == [None, None]
-    edits = client.get("/brainscan/workbench").json()
+    edits = client.get("/llminspect/workbench").json()
     assert [x["id"] for x in edits["edits"]] == [e["id"]] and edits["edits"][0]["applied"] is False and edits["applied"] == []
-    half = client.post("/brainscan/knobs/tone/ablate", json={"factor": 0.5, "note": "half"}).json()
+    half = client.post("/llminspect/knobs/tone/ablate", json={"factor": 0.5, "note": "half"}).json()
     assert half["factor"] == 0.5 and half["note"] == "half"
     for body in ({"factor": 2}, {"factor": -0.1}, {"factor": "x"}, {"factor": "nan"}):
-        assert client.post("/brainscan/knobs/tone/ablate", json=body).status_code == 400, body
-    assert client.post("/brainscan/knobs/nope/ablate", json={}).status_code == 404
+        assert client.post("/llminspect/knobs/tone/ablate", json=body).status_code == 400, body
+    assert client.post("/llminspect/knobs/nope/ablate", json={}).status_code == 404
 
     # monitor: one rule per neuron, no duplicates
-    ms = client.post("/brainscan/knobs/tone/monitor", json={}).json()
+    ms = client.post("/llminspect/knobs/tone/monitor", json={}).json()
     assert [m["direction"] for m in ms] == ["L2 N5", "L1 N3"] and {m["kind"] for m in ms} == {"neuron"}
     assert [m["label"] for m in ms] == ["tone · L2 N5", "tone · L1 N3"]
     assert {(m["threshold"], m["sign"], m["min_tokens"], m["phase"]) for m in ms} == {(4.0, "above", 2, "gen")}
-    assert [m["id"] for m in client.post("/brainscan/knobs/tone/monitor", json={}).json()] == [m["id"] for m in ms]
-    assert len(client.get("/brainscan/monitors").json()) == 2
+    assert [m["id"] for m in client.post("/llminspect/knobs/tone/monitor", json={}).json()] == [m["id"] for m in ms]
+    assert len(client.get("/llminspect/monitors").json()) == 2
     assert rec.watch.labels == ["L1 N3", "L2 N5"]
-    loose = client.post("/brainscan/knobs/tone/monitor", json={"threshold": 3, "sign": "either", "min_tokens": 1}).json()
-    assert len(loose) == 2 and len(client.get("/brainscan/monitors").json()) == 4
-    assert client.post("/brainscan/knobs/tone/monitor", json={"sign": "up"}).status_code == 400
-    assert len(client.get("/brainscan/monitors").json()) == 4  # none added
-    assert client.post("/brainscan/knobs/nope/monitor", json={}).status_code == 404
+    loose = client.post("/llminspect/knobs/tone/monitor", json={"threshold": 3, "sign": "either", "min_tokens": 1}).json()
+    assert len(loose) == 2 and len(client.get("/llminspect/monitors").json()) == 4
+    assert client.post("/llminspect/knobs/tone/monitor", json={"sign": "up"}).status_code == 400
+    assert len(client.get("/llminspect/monitors").json()) == 4  # none added
+    assert client.post("/llminspect/knobs/nope/monitor", json={}).status_code == 404
 
     # sweep
-    sw = client.post("/brainscan/knobs/tone/sweep", json={"prompt": "Hi", "factors": [0, 1], "max_tokens": 4})
+    sw = client.post("/llminspect/knobs/tone/sweep", json={"prompt": "Hi", "factors": [0, 1], "max_tokens": 4})
     assert sw.status_code == 200 and [o["factor"] for o in sw.json()] == [0, 1] and sw.json()[1]["doses"] == [1.0, -0.5]
     for body in ({"prompt": " "}, {"prompt": "Hi", "factors": ["x"]}, {"prompt": "Hi", "max_tokens": "x"}):
-        assert client.post("/brainscan/knobs/tone/sweep", json=body).status_code == 400, body
-    assert client.post("/brainscan/knobs/nope/sweep", json={"prompt": "Hi"}).status_code == 404
+        assert client.post("/llminspect/knobs/tone/sweep", json=body).status_code == 400, body
+    assert client.post("/llminspect/knobs/nope/sweep", json={"prompt": "Hi"}).status_code == 404
 
-    assert client.delete("/brainscan/knobs/tone").json() == {"deleted": "tone"}
-    assert client.delete("/brainscan/knobs/tone").status_code == 404
-    assert [k["name"] for k in client.get("/brainscan/knobs").json()["knobs"]] == ["texty"]
+    assert client.delete("/llminspect/knobs/tone").json() == {"deleted": "tone"}
+    assert client.delete("/llminspect/knobs/tone").status_code == 404
+    assert [k["name"] for k in client.get("/llminspect/knobs").json()["knobs"]] == ["texty"]
 
 
 def test_a_busy_model_is_a_409(rec, client):
@@ -626,7 +626,7 @@ def test_a_busy_model_is_a_409(rec, client):
     thread.start()
     assert held.wait(5)
     try:
-        r = client.post("/brainscan/knobs/tone/sweep", json={"prompt": "Hi", "factors": [1], "max_tokens": 2})
+        r = client.post("/llminspect/knobs/tone/sweep", json={"prompt": "Hi", "factors": [1], "max_tokens": 2})
     finally:
         release.set()
         thread.join()
@@ -637,8 +637,8 @@ def test_a_shape_clash_is_a_409(rec, client, tmp_path, monkeypatch):
     path = tmp_path / "k.json"
     path.write_text(json.dumps({"version": 1, "shape": [1, 1], "knobs": []}))
     monkeypatch.setattr(rec, "knobs", KnobBank(path, rec.neurons))
-    r = client.post("/brainscan/knobs", json={"name": "tone", "neurons": [{"neuron": "L2 N5", "dose": 1}]})
+    r = client.post("/llminspect/knobs", json={"name": "tone", "neurons": [{"neuron": "L2 N5", "dose": 1}]})
     assert r.status_code == 409 and "Two models share the name" in r.json()["detail"]
-    got = client.get("/brainscan/knobs").json()
+    got = client.get("/llminspect/knobs").json()
     assert got["knobs"] == [] and "Two models share the name" in got["error"]
-    assert client.delete("/brainscan/knobs/tone").status_code == 409
+    assert client.delete("/llminspect/knobs/tone").status_code == 409

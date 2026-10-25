@@ -157,7 +157,7 @@ export function HELPER() {
     async hide() { cap.classList.remove("on"); await sleep(450); },
     async title(text, sub = "", ms = 2800) {
       await d.hide();
-      title.innerHTML = `<div class="k">Brainscan</div><div class="t">${text}</div>${sub ? `<div class="s">${sub}</div>` : ""}`;
+      title.innerHTML = `<div class="k">LLMInspect</div><div class="t">${text}</div>${sub ? `<div class="s">${sub}</div>` : ""}`;
       title.classList.add("on");
       await sleep(ms);
       title.classList.remove("on");
@@ -174,7 +174,7 @@ export function HELPER() {
 
     // app helpers
     CAPITAL: "What is the capital of Australia? Answer in one sentence.",
-    show(view) { document.dispatchEvent(new CustomEvent("brainscan:show", { detail: view })); },
+    show(view) { document.dispatchEvent(new CustomEvent("llminspect:show", { detail: view })); },
     /** The bar of the screen on show, and its parts: a tool by its label, a step chip, Next. */
     bar() { return [...document.querySelectorAll(".act-bar")].find((b) => b.offsetParent); },
     tool(label) { return [...d.bar().querySelectorAll(".ab-btn")].find((b) => b.textContent.trim().startsWith(label)) || null; },
@@ -204,14 +204,14 @@ export function HELPER() {
       d.key("Enter", {}, ta);
       await d.until(() => /^Done/.test(c.querySelector(".composer-status").innerText), 180000, "the answer");
       await sleep(1500);
-      const run = await d.api("GET", `/brainscan/runs/${q("#run-select").value}`);
+      const run = await d.api("GET", `/llminspect/runs/${q("#run-select").value}`);
       return ([...run.messages].reverse().find((m) => m.role === "assistant")?.content || "").trim();
     },
     /** The latest chat that asked CAPITAL (the ablate scene makes one). */
     async capitalChat() {
-      const runs = await (await fetch("/brainscan/runs")).json();
+      const runs = await (await fetch("/llminspect/runs")).json();
       for (const r of runs.filter((x) => x.id.startsWith("chat-") && !x.id.includes("-edited") && (x.tokens || 0) > 0).slice(0, 12)) {
-        const run = await d.api("GET", `/brainscan/runs/${r.id}`);
+        const run = await d.api("GET", `/llminspect/runs/${r.id}`);
         if (run.messages.some((m) => m.role === "user" && m.content === d.CAPITAL)) return r.id;
       }
       return d.latestChat();
@@ -219,7 +219,7 @@ export function HELPER() {
     /** The last token in the Trace conversation whose text is `text`. */
     word(text) { return [...document.querySelectorAll("#tv-convo-body .ct")].reverse().find((e) => e.textContent.trim() === text) || null; },
     async latestChat() {
-      const runs = await (await fetch("/brainscan/runs")).json();
+      const runs = await (await fetch("/llminspect/runs")).json();
       return runs.find((r) => r.id.startsWith("chat-") && !r.id.endsWith("-edited") && (r.tokens || 0) > 0)?.id || null;
     },
     async openRun(id) {
@@ -236,16 +236,16 @@ export function HELPER() {
     /** Put the app in a known state before a scene is recorded. */
     async reset(o = {}) {
       document.activeElement?.blur?.();
-      const status = await d.api("GET", "/brainscan/status");
-      for (const iv of status.interventions || []) await d.api("DELETE", `/brainscan/interventions/${iv.id}`);
-      if (o.revert) await d.api("POST", "/brainscan/workbench/revert", {});
-      if (o.clearEdits) for (const e of (await d.api("GET", "/brainscan/workbench")).edits) await d.api("DELETE", `/brainscan/workbench/edits/${e.id}`);
-      if (o.clearChecks) for (const c of await d.api("GET", "/brainscan/checks")) await d.api("DELETE", `/brainscan/checks/${c.id}`);
+      const status = await d.api("GET", "/llminspect/status");
+      for (const iv of status.interventions || []) await d.api("DELETE", `/llminspect/interventions/${iv.id}`);
+      if (o.revert) await d.api("POST", "/llminspect/workbench/revert", {});
+      if (o.clearEdits) for (const e of (await d.api("GET", "/llminspect/workbench")).edits) await d.api("DELETE", `/llminspect/workbench/edits/${e.id}`);
+      if (o.clearChecks) for (const c of await d.api("GET", "/llminspect/checks")) await d.api("DELETE", `/llminspect/checks/${c.id}`);
       if (o.apply) {
-        const wb = await d.api("GET", "/brainscan/workbench");
-        if (wb.edits.length && !wb.applied.length) await d.api("POST", "/brainscan/workbench/apply", {});
+        const wb = await d.api("GET", "/llminspect/workbench");
+        if (wb.edits.length && !wb.applied.length) await d.api("POST", "/llminspect/workbench/apply", {});
       }
-      document.dispatchEvent(new CustomEvent("brainscan:workbench"));
+      document.dispatchEvent(new CustomEvent("llminspect:workbench"));
       if (!q("#guide").hidden) q("#guide-close").click();
       if (!q("#model-picker").hidden) q("#mp-close").click();
       if (!q("#gv-palette").hidden) d.key("Escape", {}, q("#gv-q"));
@@ -267,7 +267,7 @@ export function HELPER() {
       }
       // The action the scene is about, at a given step (or its first step not done yet).
       if (o.action) {
-        document.dispatchEvent(new CustomEvent("brainscan:pick", { detail: o.action }));
+        document.dispatchEvent(new CustomEvent("llminspect:pick", { detail: o.action }));
         await sleep(1200);
         if (o.step) { d.stepChip(o.step)?.click(); await sleep(1000); }
       }
@@ -295,8 +295,8 @@ export const SCENES = [
     setup: async () => { await window.demo.reset({ view: "scanner", run: "latest-chat", revert: true, action: "explore" }); return true; },
     script: async () => {
       const d = window.demo, q = d.q;
-      await d.title("Adjust open-weights models, and see what changed", "Brainscan runs the model on your GPU and records what happens inside it", 3400);
-      await d.say("Brainscan runs an open-weights model on your machine and records its internals, token by token.",
+      await d.title("Adjust open-weights models, and see what changed", "LLMInspect runs the model on your GPU and records what happens inside it", 3400);
+      await d.say("LLMInspect runs an open-weights model on your machine and records its internals, token by token.",
         `Here: ${q("#model-badge").innerText.split(" · ")[0]}, within a GPU memory cap.`);
       await d.move(q("#verbs"));
       await d.say("Start with what you want to do to the model.",
@@ -377,7 +377,7 @@ export const SCENES = [
       await d.say("Step 6, Export: save the edited model as a Hugging Face checkpoint, every edit recorded.", "", "top");
       await d.click(d.tool("Restore original"));
       await d.cap("Or restore the original weights.", "", "top");
-      await d.until(async () => !(await d.api("GET", "/brainscan/workbench")).applied.length, 60000, "restored");
+      await d.until(async () => !(await d.api("GET", "/llminspect/workbench")).applied.length, 60000, "restored");
       await d.sleep(1800);
       await d.title("Next: scale instead of remove", "", 2400);
       return true;
@@ -420,7 +420,7 @@ export const SCENES = [
       await d.sleep(800);
       await d.say("Apply: kept as a scale edit. Read on the edited weights, the word matches the test.", "", "top");
       await d.click(d.tool("Restore original"));
-      await d.until(async () => !(await d.api("GET", "/brainscan/workbench")).applied.length, 60000, "restored");
+      await d.until(async () => !(await d.api("GET", "/llminspect/workbench")).applied.length, 60000, "restored");
       await d.cap("And back to the original weights.", "", "top");
       await d.sleep(2000);
       await d.title("Next: steer", "", 2400);
@@ -433,7 +433,7 @@ export const SCENES = [
     name: "04-steer",
     setup: async () => {
       const d = window.demo, q = d.q;
-      await d.api("DELETE", "/brainscan/directions/language_fr").catch(() => {});
+      await d.api("DELETE", "/llminspect/directions/language_fr").catch(() => {});
       await d.reset({ view: "workbench", revert: true, action: "steer", step: "Direction" });
       q("#wb-a").value = ""; q("#wb-b").value = "";
       q("#wb-sweep").innerHTML = ""; q("#wb-save-row").hidden = true; q("#wb-find-msg").textContent = "";
@@ -447,7 +447,7 @@ export const SCENES = [
       await d.click(q("#wb-example"));
       await d.say("Step 1, Direction: two sets of examples, one per line.", "Here: French sentences against their English translations.", "top");
       await d.click(q("#wb-analyze"));
-      await d.cap("Brainscan reads every example at every layer and scores how well the difference separates held-out ones.", "", "top");
+      await d.cap("LLMInspect reads every example at every layer and scores how well the difference separates held-out ones.", "", "top");
       await d.until(() => q("#wb-sweep svg"), 180000, "sweep");
       await d.sleep(800);
       await d.move(q("#wb-sweep"));
@@ -495,11 +495,11 @@ export const SCENES = [
       await d.say("The z lane: each direction per token, with a random direction as the control (dashed).",
         "The grey band is ±2. Outside it, the probe reads something the random direction doesn't.", "top");
       // A token the model wrote, from the middle of its reply.
-      const tape = await d.api("GET", `/brainscan/runs/${q("#run-select").value}/tape`);
+      const tape = await d.api("GET", `/llminspect/runs/${q("#run-select").value}/tape`);
       const gen = tape.filter((x) => x.ph === "gen");
       await d.realMove(r.left + r.width * 0.45, r.top + r.height * 0.5, 800);
       d.press();
-      document.dispatchEvent(new CustomEvent("brainscan:select", { detail: { t: (gen[gen.length >> 1] || tape[tape.length - 1]).t } }));
+      document.dispatchEvent(new CustomEvent("llminspect:select", { detail: { t: (gen[gen.length >> 1] || tape[tape.length - 1]).t } }));
       await d.until(() => q("#inspector .proj-list"), 30000, "projections");
       await d.sleep(600);
       await d.move(q("#inspector .proj-list"));
@@ -514,7 +514,7 @@ export const SCENES = [
     name: "06-monitor",
     setup: async () => {
       const d = window.demo;
-      for (const m of await d.api("GET", "/brainscan/monitors")) await d.api("DELETE", `/brainscan/monitors/${m.id}`);
+      for (const m of await d.api("GET", "/llminspect/monitors")) await d.api("DELETE", `/llminspect/monitors/${m.id}`);
       await d.reset({ view: "scanner", run: "", action: "monitor", step: "Rule" });
       return true;
     },
@@ -593,12 +593,12 @@ export const SCENES = [
       await d.reset({ view: "workbench", run: "capital-chat", revert: true, clearEdits: true, action: "compare", step: "Change" });
       // An edit to compare: the units that push "Canberra" up most, in the stack but not applied.
       const run = d.q("#run-select").value;
-      const tape = await d.api("GET", `/brainscan/runs/${run}/tape`);
+      const tape = await d.api("GET", `/llminspect/runs/${run}/tape`);
       const t = tape.find((r) => r.tx === " Canberra").t - 1;
-      const ex = await d.api("GET", `/brainscan/runs/${run}/tokens/${t}/explain`);
+      const ex = await d.api("GET", `/llminspect/runs/${run}/tokens/${t}/explain`);
       const units = ex.top.filter(([, c]) => c > 0).slice(0, 12).map(([g]) => g);
-      await d.api("POST", "/brainscan/anatomy/lesion", { units, apply: false, note: "units behind Canberra" });
-      document.dispatchEvent(new CustomEvent("brainscan:workbench"));
+      await d.api("POST", "/llminspect/anatomy/lesion", { units, apply: false, note: "units behind Canberra" });
+      document.dispatchEvent(new CustomEvent("llminspect:workbench"));
       await d.sleep(1500);
       d.stepChip("Change")?.click();
       await d.sleep(800);
@@ -610,7 +610,7 @@ export const SCENES = [
       await d.move(q("#wb-list"));
       await d.say("Step 1, Change: an edit in the stack, removing the units behind “Canberra”.", "", "top");
       await d.click(d.tool("Apply stack"));
-      await d.until(async () => (await d.api("GET", "/brainscan/workbench")).applied.length, 60000, "applied");
+      await d.until(async () => (await d.api("GET", "/llminspect/workbench")).applied.length, 60000, "applied");
       await d.sleep(1200);
       await d.click(d.next());
       await d.click(d.tool("Re-run the chat"));
@@ -642,8 +642,8 @@ export const SCENES = [
       await d.sleep(1000);
       await d.say(`Step 4, Inside: ${q("#an-detail .cmp-line").innerText.replace(/\s+/g, " ").trim()}.`,
         "Every unit is colored by how the edit changed its effect on the word.", "top");
-      await d.api("POST", "/brainscan/workbench/revert", {});
-      document.dispatchEvent(new CustomEvent("brainscan:workbench"));
+      await d.api("POST", "/llminspect/workbench/revert", {});
+      document.dispatchEvent(new CustomEvent("llminspect:workbench"));
       await d.title("Next: the screens, and Do…", "", 2400);
       return true;
     },
@@ -668,7 +668,7 @@ export const SCENES = [
       await d.type(inp, "knock", 90);
       await d.say("Do… (⌘K) searches every action and tool, and runs it from any screen.", "Greyed ones say what they need first.", "top");
       d.key("Escape", {}, inp);
-      await d.title("Brainscan", "Adjust open-weights models, and see what changed", 3400);
+      await d.title("LLMInspect", "Adjust open-weights models, and see what changed", 3400);
       return true;
     },
   },

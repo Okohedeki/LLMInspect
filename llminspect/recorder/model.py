@@ -1,7 +1,7 @@
 """Load the subject model and expose the parts the recorder hooks into.
 
 `ollama:<tag>` loads weights straight from the local Ollama store: the GGUF blob is
-dequantized once into a bf16 Hugging Face checkpoint under ~/.cache/brainscan. The
+dequantized once into a bf16 Hugging Face checkpoint under ~/.cache/llminspect. The
 quantization noise stays in the weights, so those recordings are exploratory and
 labelled as such; causal experiments should use original bf16 checkpoints.
 """
@@ -20,7 +20,7 @@ import torch
 from safetensors.torch import save_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-CACHE = Path(os.environ.get("BRAINSCAN_CACHE", Path.home() / ".cache" / "brainscan"))
+CACHE = Path(os.environ.get("LLMINSPECT_CACHE", Path.home() / ".cache" / "llminspect"))
 STOP_TOKENS = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "<|im_end|>", "<|endoftext|>",
                "<end_of_turn>", "<|return|>", "<|call|>"]
 
@@ -75,7 +75,7 @@ def display_name(spec: str) -> str:
 
 def prepare(spec: str, dtype=torch.bfloat16) -> tuple[str, dict]:
     """Make sure the model exists as a Hugging Face checkpoint; return (path, provenance). An Ollama
-    tag ("ollama:llama3.1:8b") or a GGUF file path is dequantized once into Brainscan's model cache;
+    tag ("ollama:llama3.1:8b") or a GGUF file path is dequantized once into LLMInspect's model cache;
     the GGUF itself is only read."""
     if spec.lower().endswith(".gguf"):
         blob = Path(spec).expanduser()
@@ -91,8 +91,8 @@ def prepare(spec: str, dtype=torch.bfloat16) -> tuple[str, dict]:
         return spec, {"spec": spec, "source": source, "quantization": None, "exploratory": False}
     tag = spec.split(":", 1)[1]
     local = CACHE / "models" / f"ollama-{_slug(tag)}"
-    if (local / "brainscan_provenance.json").exists():
-        return str(local), json.loads((local / "brainscan_provenance.json").read_text())
+    if (local / "llminspect_provenance.json").exists():
+        return str(local), json.loads((local / "llminspect_provenance.json").read_text())
     blob, config = resolve_ollama(tag)
     return _dequantize(spec, f"ollama-{_slug(tag)}", blob, dtype, {
         "source": "ollama", "quantization": config.get("file_type"), "family": config.get("model_family"),
@@ -101,9 +101,9 @@ def prepare(spec: str, dtype=torch.bfloat16) -> tuple[str, dict]:
 
 
 def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[str, dict]:
-    """A GGUF's weights as a Hugging Face checkpoint in Brainscan's model cache (made once)."""
+    """A GGUF's weights as a Hugging Face checkpoint in LLMInspect's model cache (made once)."""
     local = CACHE / "models" / folder
-    prov_file = local / "brainscan_provenance.json"
+    prov_file = local / "llminspect_provenance.json"
     if prov_file.exists():
         return str(local), json.loads(prov_file.read_text())
     provenance = {"spec": spec, "blob": str(blob), "exploratory": True, **info}
@@ -112,7 +112,7 @@ def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[
     link = gguf_dir / f"{folder}.gguf"
     if not link.exists():
         link.symlink_to(blob)
-    print(f"[brainscan] dequantizing {blob} -> {local} (one time)", flush=True)
+    print(f"[llminspect] dequantizing {blob} -> {local} (one time)", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(gguf_dir, gguf_file=link.name)
     model = AutoModelForCausalLM.from_pretrained(gguf_dir, gguf_file=link.name, dtype=dtype)
     # The weights are already dequantized, but transformers still tags the model as
@@ -195,8 +195,8 @@ class Subject:
         path, self.provenance = prepare(spec, dtype)
         _check_vram(path, device)
         self.spec = spec
-        # BRAINSCAN_MODEL_NAME names the model BRAINSCAN_MODEL points at, not one switched to later.
-        env_name = os.environ.get("BRAINSCAN_MODEL_NAME") if spec == os.environ.get("BRAINSCAN_MODEL") else None
+        # LLMINSPECT_MODEL_NAME names the model LLMINSPECT_MODEL points at, not one switched to later.
+        env_name = os.environ.get("LLMINSPECT_MODEL_NAME") if spec == os.environ.get("LLMINSPECT_MODEL") else None
         self.name = name or env_name or display_name(spec)
         self.slug = _slug(self.name.split("/")[-1])
         self.tokenizer = AutoTokenizer.from_pretrained(path)

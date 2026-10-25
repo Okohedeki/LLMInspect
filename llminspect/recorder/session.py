@@ -159,7 +159,7 @@ class Cancelled(RuntimeError):
 
 
 def run_name(hint: str) -> str:
-    """The run id a client's X-Brainscan-Run header (or event run) names."""
+    """The run id a client's X-LLMInspect-Run header (or event run) names."""
     return re.sub(r"[^A-Za-z0-9._-]+", "-", hint)[:80]
 
 
@@ -178,7 +178,7 @@ class Recorder:
             try:
                 self.anatomy = Anatomy(subject, store.root / "anatomy", settings.anatomy_clusters)
             except Exception as exc:
-                print(f"[brainscan] weight anatomy disabled ({type(exc).__name__}: {exc}); "
+                print(f"[llminspect] weight anatomy disabled ({type(exc).__name__}: {exc}); "
                       "the Weights tab will be unavailable", flush=True)
         self.tracer = Tracer(self) if self.anatomy is not None else None  # needs the unit map
         self.neurons = Neurons(self)
@@ -353,7 +353,7 @@ class Recorder:
         try:
             self.sync_watch()
         except Exception as exc:  # the monitor is saved either way; the next request tries again
-            print(f"[brainscan] neuron watch not updated ({type(exc).__name__}: {exc})", flush=True)
+            print(f"[llminspect] neuron watch not updated ({type(exc).__name__}: {exc})", flush=True)
 
     def _watch_recording(self):
         return self.watch.recording() if self.watch is not None else contextlib.nullcontext()
@@ -855,13 +855,13 @@ class Recorder:
                 self.anatomy.flush(self.store, run.id, req)
             except Exception as exc:
                 self.anatomy.pending.pop(run.id, None)
-                print(f"[brainscan] could not store weight activity for {run.id}: {type(exc).__name__}: {exc}", flush=True)
+                print(f"[llminspect] could not store weight activity for {run.id}: {type(exc).__name__}: {exc}", flush=True)
         self.store.write_meta(run.id, run.meta)
         n_new = read_to - start
         self.perf.update(prefill_tok_s=round(n_new / prefill_s, 1) if prefill_s > 0 else None,
                          decode_tok_s=round(len(gen_ids) / decode_s, 1) if decode_s > 0 and gen_ids else None,
                          seconds={k: round(v, 3) for k, v in timing.items()})
-        print(f"[brainscan] {run.id} req {req}: prefill {n_new} tok ({max(0, read_to - record_from)} recorded), "
+        print(f"[llminspect] {run.id} req {req}: prefill {n_new} tok ({max(0, read_to - record_from)} recorded), "
               f"decode {len(gen_ids)} tok, " + ", ".join(f"{k} {v:.2f}s" for k, v in timing.items())
               + (", cancelled" if finish == "cancelled" else ""), flush=True)
         self.publish({"k": "done", "run": run.id, "req": req, "finish": finish, "generated": len(gen_ids),

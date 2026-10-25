@@ -1,8 +1,8 @@
 """HTTP server: OpenAI-compatible chat endpoint, recorder API, live feed and scanner UI.
 
-Run inside WSL:   scripts/run.sh -m brainscan.server
+Run inside WSL:   scripts/run.sh -m llminspect.server
 Point any OpenAI-compatible harness at http://localhost:8765/v1 and open
-http://localhost:8765/ for the scanner. Send `X-Brainscan-Run: <id>` to group
+http://localhost:8765/ for the scanner. Send `X-LLMInspect-Run: <id>` to group
 requests into a run explicitly; otherwise runs are inferred from shared prefixes.
 """
 
@@ -99,7 +99,7 @@ def _load(spec: str | None = None) -> bool:
         state.update(recorder=rec, status="ready", step="ready", target=None)
         hub.publish({"k": "status", "status": "ready"})
         hub.publish({"k": "model", "model": subject.info()})
-        print(f"[brainscan] ready: {subject.name} ({subject.n_layers} layers) on {subject.device}", flush=True)
+        print(f"[llminspect] ready: {subject.name} ({subject.n_layers} layers) on {subject.device}", flush=True)
         return True
     except Exception as exc:
         traceback.print_exc()
@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
     pump.cancel()
 
 
-app = FastAPI(title="Brainscan recorder", lifespan=lifespan)
+app = FastAPI(title="LLMInspect recorder", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -194,8 +194,8 @@ def _params(body: dict, request: Request) -> GenParams:
         max_tokens=int(body.get("max_completion_tokens") or body.get("max_tokens") or 1024),
         stop=[stop] if isinstance(stop, str) else list(stop),
         seed=body.get("seed"),
-        run_hint=request.headers.get("x-brainscan-run") or meta.get("brainscan_run"),
-        label=request.headers.get("x-brainscan-label") or meta.get("brainscan_label"),
+        run_hint=request.headers.get("x-llminspect-run") or meta.get("llminspect_run"),
+        label=request.headers.get("x-llminspect-label") or meta.get("llminspect_label"),
         template_kwargs={**settings.template_kwargs(), **(body.get("chat_template_kwargs") or {})})
 
 
@@ -208,7 +208,7 @@ def _usage(res) -> dict:
 @app.get("/v1/models")
 async def list_models():
     name = state["recorder"].s.name if state["recorder"] else settings.model
-    return {"object": "list", "data": [{"id": name, "object": "model", "created": 0, "owned_by": "brainscan"}]}
+    return {"object": "list", "data": [{"id": name, "object": "model", "created": 0, "owned_by": "llminspect"}]}
 
 
 async def _cancel_on_disconnect(request: Request, cancel: threading.Event) -> None:
@@ -242,7 +242,7 @@ async def chat_completions(request: Request):
     except Cancelled:  # stopped while it waited for the model: nothing was recorded
         return JSONResponse({
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}", "object": "chat.completion", "created": int(time.time()),
-            "model": model_name, "brainscan": {"run": None, "request": None},
+            "model": model_name, "llminspect": {"run": None, "request": None},
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             "choices": [{"index": 0, "message": {"role": "assistant", "content": None},
                          "finish_reason": "cancelled", "logprobs": None}]})
@@ -255,9 +255,9 @@ async def chat_completions(request: Request):
         message["tool_calls"] = res.tool_calls
     return JSONResponse({
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}", "object": "chat.completion", "created": int(time.time()),
-        "model": model_name, "usage": _usage(res), "brainscan": {"run": res.run_id, "request": res.req},
+        "model": model_name, "usage": _usage(res), "llminspect": {"run": res.run_id, "request": res.req},
         "choices": [{"index": 0, "message": message, "finish_reason": res.finish_reason, "logprobs": None}],
-    }, headers={"X-Brainscan-Run": res.run_id})
+    }, headers={"X-LLMInspect-Run": res.run_id})
 
 
 async def _stream(rec: Recorder, params: GenParams, model_name: str, include_usage: bool):
@@ -299,13 +299,13 @@ async def _stream(rec: Recorder, params: GenParams, model_name: str, include_usa
             if kind == "done":
                 if val.tool_calls:
                     yield chunk({"tool_calls": [{"index": i, **c} for i, c in enumerate(val.tool_calls)]})
-                yield chunk({}, val.finish_reason, brainscan={"run": val.run_id, "request": val.req})
+                yield chunk({}, val.finish_reason, llminspect={"run": val.run_id, "request": val.req})
                 if include_usage:
                     payload = {"id": cid, "object": "chat.completion.chunk", "created": created,
                                "model": model_name, "choices": [], "usage": _usage(val)}
                     yield f"data: {json.dumps(payload)}\n\n"
             elif kind == "cancelled":  # stopped while it waited for the model: nothing was recorded
-                yield chunk({}, "cancelled", brainscan={"run": None, "request": None})
+                yield chunk({}, "cancelled", llminspect={"run": None, "request": None})
             else:
                 yield f"data: {json.dumps({'error': {'message': str(val), 'type': type(val).__name__}})}\n\n"
             yield "data: [DONE]\n\n"
@@ -318,7 +318,7 @@ async def _stream(rec: Recorder, params: GenParams, model_name: str, include_usa
             cancel.set()
 
 
-@app.get("/brainscan/status")
+@app.get("/llminspect/status")
 async def get_status():
     out = {"status": state["status"], "step": state["step"], "error": state["error"],
            "target": state["target"], "switch": state["switch"],
@@ -327,7 +327,7 @@ async def get_status():
     if torch.cuda.is_available():
         free, total = torch.cuda.mem_get_info()
         out["gpu"] = {"name": torch.cuda.get_device_name(0), "used": total - free, "total": total,
-                      # this process alone: what PyTorch holds, and the share it may hold (BRAINSCAN_GPU_FRACTION)
+                      # this process alone: what PyTorch holds, and the share it may hold (LLMINSPECT_GPU_FRACTION)
                       "process": torch.cuda.memory_reserved(), "process_peak": torch.cuda.max_memory_reserved(),
                       "fraction": settings.gpu_fraction or None}
     if state["recorder"]:
@@ -335,7 +335,7 @@ async def get_status():
     return out
 
 
-@app.post("/brainscan/cancel")
+@app.post("/llminspect/cancel")
 async def cancel_generation(request: Request):
     """Stop the request that is generating, between two tokens. It finishes like any other request,
     with finish_reason "cancelled": the tokens generated so far are recorded and returned to its
@@ -346,7 +346,7 @@ async def cancel_generation(request: Request):
     return recorder().cancel(str(run) if run else None)
 
 
-@app.get("/brainscan/models")
+@app.get("/llminspect/models")
 async def get_models():
     """Models on this machine the recorder can switch to. Nothing is downloaded."""
     rec = state["recorder"]
@@ -360,7 +360,7 @@ async def get_models():
 
 
 def _model_dirs() -> list:
-    """Folders to search: BRAINSCAN_MODEL_DIRS, plus the startup model's own folder so it can always
+    """Folders to search: LLMINSPECT_MODEL_DIRS, plus the startup model's own folder so it can always
     be switched back to, wherever it lives."""
     dirs = list(settings.model_dirs)
     if not STARTUP_MODEL.startswith("ollama:") and os.path.isdir(STARTUP_MODEL):
@@ -368,17 +368,17 @@ def _model_dirs() -> list:
     return dirs
 
 
-@app.post("/brainscan/model")
+@app.post("/llminspect/model")
 async def switch_model(body: dict):
-    """Unload the current model and load another one found by GET /brainscan/models."""
+    """Unload the current model and load another one found by GET /llminspect/models."""
     spec = str(body.get("spec") or "")
     rec = state["recorder"]
     if rec is not None and rec.s.spec == spec and state["status"] == "ready":
         return {"ok": True, "unchanged": True, "model": rec.s.info()}
     entry = await asyncio.to_thread(catalog.find, spec, _model_dirs())
     if entry is None:
-        raise HTTPException(404, f"{spec!r} is not a model found on this machine; Brainscan only loads "
-                                 "models already on disk (see GET /brainscan/models)")
+        raise HTTPException(404, f"{spec!r} is not a model found on this machine; LLMInspect only loads "
+                                 "models already on disk (see GET /llminspect/models)")
     if entry.get("supported") is False:
         raise HTTPException(400, entry["notes"][0] if entry["notes"] else f"{entry['name']} can't be loaded")
     if not _switching.acquire(blocking=False):
@@ -399,7 +399,7 @@ async def switch_model(body: dict):
     return {"ok": True, "loading": spec, "name": entry["name"]}
 
 
-@app.get("/brainscan/runs")
+@app.get("/llminspect/runs")
 async def get_runs():
     return recorder().list_runs()
 
@@ -411,18 +411,18 @@ def _run_or_404(run_id: str):
     return run
 
 
-@app.get("/brainscan/runs/{run_id}")
+@app.get("/llminspect/runs/{run_id}")
 async def get_run(run_id: str):
     run = _run_or_404(run_id)
     return {"meta": run.meta, "messages": run.messages, "events": run.events}
 
 
-@app.get("/brainscan/runs/{run_id}/tape")
+@app.get("/llminspect/runs/{run_id}/tape")
 async def get_tape(run_id: str):
     return [compact(r) for r in _run_or_404(run_id).tape]
 
 
-@app.get("/brainscan/runs/{run_id}/tokens/{t}")
+@app.get("/llminspect/runs/{run_id}/tokens/{t}")
 async def get_token(run_id: str, t: int):
     detail = recorder().token_detail(run_id, t)
     if detail is None:
@@ -430,7 +430,7 @@ async def get_token(run_id: str, t: int):
     return detail
 
 
-@app.post("/brainscan/events")
+@app.post("/llminspect/events")
 async def post_event(request: Request):
     body = await request.json()
     try:
@@ -439,12 +439,12 @@ async def post_event(request: Request):
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/brainscan/interventions")
+@app.get("/llminspect/interventions")
 async def get_interventions():
     return [iv.describe() for iv in recorder().interventions.values()]
 
 
-@app.post("/brainscan/interventions")
+@app.post("/llminspect/interventions")
 async def post_intervention(request: Request):
     body = await request.json()
     try:
@@ -454,7 +454,7 @@ async def post_intervention(request: Request):
     return iv.describe()
 
 
-@app.patch("/brainscan/interventions/{iid}")
+@app.patch("/llminspect/interventions/{iid}")
 async def patch_intervention(iid: str, request: Request):
     body = await request.json()
     try:
@@ -464,7 +464,7 @@ async def patch_intervention(iid: str, request: Request):
     return iv.describe()
 
 
-@app.delete("/brainscan/interventions/{iid}")
+@app.delete("/llminspect/interventions/{iid}")
 async def delete_intervention(iid: str):
     try:
         await asyncio.to_thread(recorder().remove_intervention, iid)
@@ -473,12 +473,12 @@ async def delete_intervention(iid: str):
     return {"deleted": iid}
 
 
-@app.get("/brainscan/directions")
+@app.get("/llminspect/directions")
 async def get_directions():
     return recorder().directions.describe()
 
 
-@app.post("/brainscan/directions")
+@app.post("/llminspect/directions")
 async def post_direction(request: Request):
     body = await request.json()
     rec = recorder()
@@ -494,7 +494,7 @@ async def post_direction(request: Request):
     return rec.directions.describe()
 
 
-@app.post("/brainscan/directions/analyze")
+@app.post("/llminspect/directions/analyze")
 async def analyze_direction(request: Request):
     body = await request.json()
     try:
@@ -505,7 +505,7 @@ async def analyze_direction(request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.post("/brainscan/directions/save")
+@app.post("/llminspect/directions/save")
 async def save_direction(request: Request):
     body = await request.json()
     rec = recorder()
@@ -521,7 +521,7 @@ async def save_direction(request: Request):
     return rec.directions.describe()
 
 
-@app.delete("/brainscan/directions/{name}")
+@app.delete("/llminspect/directions/{name}")
 async def delete_direction(name: str):
     rec = recorder()
     if any(e.direction == name for e in rec.edits.edits.values()) or \
@@ -535,12 +535,12 @@ async def delete_direction(name: str):
     return rec.directions.describe()
 
 
-@app.get("/brainscan/workbench")
+@app.get("/llminspect/workbench")
 async def get_workbench():
     return recorder().edits.summary()
 
 
-@app.post("/brainscan/workbench/edits")
+@app.post("/llminspect/workbench/edits")
 async def post_weight_edit(request: Request):
     body = await request.json()
     try:
@@ -550,7 +550,7 @@ async def post_weight_edit(request: Request):
     return edit.describe()
 
 
-@app.patch("/brainscan/workbench/edits/{eid}")
+@app.patch("/llminspect/workbench/edits/{eid}")
 async def patch_weight_edit(eid: str, request: Request):
     body = await request.json()
     try:
@@ -559,7 +559,7 @@ async def patch_weight_edit(eid: str, request: Request):
         raise HTTPException(404, f"no edit {eid}") from exc
 
 
-@app.delete("/brainscan/workbench/edits/{eid}")
+@app.delete("/llminspect/workbench/edits/{eid}")
 async def delete_weight_edit(eid: str):
     rec = recorder()
     if eid in rec.edits.applied:
@@ -571,7 +571,7 @@ async def delete_weight_edit(eid: str):
     return rec.edits.summary()
 
 
-@app.post("/brainscan/workbench/apply")
+@app.post("/llminspect/workbench/apply")
 async def apply_weight_edits():
     try:
         return await asyncio.to_thread(recorder().apply_weight_edits)
@@ -579,12 +579,12 @@ async def apply_weight_edits():
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.post("/brainscan/workbench/revert")
+@app.post("/llminspect/workbench/revert")
 async def revert_weight_edits():
     return await asyncio.to_thread(recorder().revert_weight_edits)
 
 
-@app.post("/brainscan/workbench/compare")
+@app.post("/llminspect/workbench/compare")
 async def compare_weight_edits(request: Request):
     body = await request.json()
     try:
@@ -594,7 +594,7 @@ async def compare_weight_edits(request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.post("/brainscan/workbench/replay")
+@app.post("/llminspect/workbench/replay")
 async def replay_chat(request: Request):
     """Ask a recorded chat's last question again on the original and the edited weights."""
     body = await request.json()
@@ -607,12 +607,12 @@ async def replay_chat(request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.get("/brainscan/checks")
+@app.get("/llminspect/checks")
 async def get_checks():
     return workbench.list_checks(recorder())
 
 
-@app.post("/brainscan/checks")
+@app.post("/llminspect/checks")
 async def post_check(request: Request):
     """Save a behavior check: {run, t, target} from a traced word, or {prompt, expect, chat}."""
     body = await request.json()
@@ -624,7 +624,7 @@ async def post_check(request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.delete("/brainscan/checks/{cid}")
+@app.delete("/llminspect/checks/{cid}")
 async def delete_check(cid: str):
     try:
         return workbench.remove_check(recorder(), cid)
@@ -644,22 +644,22 @@ def _neuron_call(fn, *args):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.get("/brainscan/neurons")
+@app.get("/llminspect/neurons")
 async def neurons_summary():
     """Layer widths, the median residual norms dose scaling uses, and the neurons being steered."""
     return recorder().neurons.summary()
 
 
-@app.get("/brainscan/neurons/index")
+@app.get("/llminspect/neurons/index")
 async def neuron_index_status():
     """Whether this model has a neuron index, and how it was built (or how far a build has got)."""
     return recorder().neuron_index.status()
 
 
-@app.post("/brainscan/neurons/index")
+@app.post("/llminspect/neurons/index")
 async def neuron_index_build(request: Request):
     """Build the neuron index over the corpus (recorder/neuron_index.py): {max_tokens}. Runs in the
-    background and holds the model while it reads; poll GET /brainscan/neurons/index."""
+    background and holds the model while it reads; poll GET /llminspect/neurons/index."""
     body = await request.json()
     rec = recorder()
     try:
@@ -669,14 +669,14 @@ async def neuron_index_build(request: Request):
     return _neuron_call(rec.neuron_index.build_async, max_tokens)
 
 
-@app.get("/brainscan/neurons/search")
+@app.get("/llminspect/neurons/search")
 async def neuron_search(q: str = "", limit: int = 20):
     """Neurons for a text query: fire on it, push it, or have it in their top contexts."""
     rec = recorder()
     return await asyncio.to_thread(_neuron_call, rec.neuron_index.search, q, max(1, min(limit, 100)))
 
 
-@app.get("/brainscan/neurons/{name}")
+@app.get("/llminspect/neurons/{name}")
 async def neuron_card(name: str, dose: float = 1.0):
     """One neuron's card (recorder/neurons.py): logit lens, steering effect at ±dose, activity, wiring."""
     rec = recorder()
@@ -687,10 +687,10 @@ async def neuron_card(name: str, dose: float = 1.0):
     return await asyncio.to_thread(_neuron_call, rec.neurons.card, layer, n, dose)
 
 
-@app.post("/brainscan/neurons/steer")
+@app.post("/llminspect/neurons/steer")
 async def neuron_steer(request: Request):
     """Steer a neuron on every request from now: {neuron: "L5 N120", dose, phase}. Remove it like any
-    intervention (DELETE /brainscan/interventions/{id})."""
+    intervention (DELETE /llminspect/interventions/{id})."""
     body = await request.json()
     rec = recorder()
     iv = await asyncio.to_thread(_neuron_call, rec.steer_neuron, str(body.get("neuron") or ""),
@@ -698,7 +698,7 @@ async def neuron_steer(request: Request):
     return iv.describe()
 
 
-@app.post("/brainscan/neurons/sweep")
+@app.post("/llminspect/neurons/sweep")
 async def neuron_sweep(request: Request):
     """A prompt answered at several dose levels: {prompt, steers: [{neuron, dose}], factors, max_tokens}."""
     body = await request.json()
@@ -727,7 +727,7 @@ async def _body(request: Request) -> dict:
     return body
 
 
-@app.get("/brainscan/knobs")
+@app.get("/llminspect/knobs")
 async def get_knobs():
     """The saved knobs (recorder/knobs.py): named sets of neurons with doses. "active" lists the
     interventions steering each one now. "error" says why saving is refused, if it is."""
@@ -735,7 +735,7 @@ async def get_knobs():
     return {"knobs": [_knob_view(rec, k) for k in rec.knobs.list()], "error": rec.knobs.error}
 
 
-@app.post("/brainscan/knobs")
+@app.post("/llminspect/knobs")
 async def post_knob(request: Request):
     """Save a knob, replacing the one of that name: {name, description, neurons: [{neuron, dose}]} or
     {name, description, text: "L5 N120 +1, L9 N64 -0.5"}."""
@@ -748,7 +748,7 @@ async def post_knob(request: Request):
     return _knob_view(rec, await asyncio.to_thread(_neuron_call, save))
 
 
-@app.delete("/brainscan/knobs/{name}")
+@app.delete("/llminspect/knobs/{name}")
 async def delete_knob(name: str):
     rec = recorder()
     if any(iv.knob == name for iv in rec.interventions.values()):
@@ -757,7 +757,7 @@ async def delete_knob(name: str):
     return {"deleted": name}
 
 
-@app.post("/brainscan/knobs/{name}/steer")
+@app.post("/llminspect/knobs/{name}/steer")
 async def knob_steer(name: str, request: Request):
     """Steer a knob on every request from now: {factor, phase}. Each neuron at its dose × factor;
     steering a knob again replaces its steers. Stop it with DELETE on this path."""
@@ -766,17 +766,17 @@ async def knob_steer(name: str, request: Request):
                                    str(body.get("phase") or "all"))
 
 
-@app.delete("/brainscan/knobs/{name}/steer")
+@app.delete("/llminspect/knobs/{name}/steer")
 async def knob_unsteer(name: str):
     rec = recorder()
     _neuron_call(rec.knobs.get, name)
     return {"knob": name, "removed": await asyncio.to_thread(rec.unsteer_knob, name)}
 
 
-@app.post("/brainscan/knobs/{name}/ablate")
+@app.post("/llminspect/knobs/{name}/ablate")
 async def knob_ablate(name: str, request: Request):
     """Add a weight edit that scales a knob's neurons' output weights by `factor` (default 0, which
-    zeroes them): {factor, note}. It is added, not applied: apply it with POST /brainscan/workbench/apply."""
+    zeroes them): {factor, note}. It is added, not applied: apply it with POST /llminspect/workbench/apply."""
     body = await _body(request)
     rec = recorder()
 
@@ -792,7 +792,7 @@ async def knob_ablate(name: str, request: Request):
     return await asyncio.to_thread(_neuron_call, add)
 
 
-@app.post("/brainscan/knobs/{name}/monitor")
+@app.post("/llminspect/knobs/{name}/monitor")
 async def knob_monitor(name: str, request: Request):
     """Watch each of a knob's neurons: {threshold, sign, min_tokens, phase}. One rule per neuron, labelled
     "knob · neuron", on its activation z-scored per token. All are added or none."""
@@ -808,7 +808,7 @@ async def knob_monitor(name: str, request: Request):
     return await asyncio.to_thread(_neuron_call, add)
 
 
-@app.post("/brainscan/knobs/{name}/sweep")
+@app.post("/llminspect/knobs/{name}/sweep")
 async def knob_sweep(name: str, request: Request):
     """A prompt answered with a knob's doses scaled by each factor: {prompt, factors, max_tokens}."""
     body = await _body(request)
@@ -822,12 +822,12 @@ async def knob_sweep(name: str, request: Request):
     return await asyncio.to_thread(_neuron_call, sweep)
 
 
-@app.get("/brainscan/monitors")
+@app.get("/llminspect/monitors")
 async def get_monitors():
     return recorder().monitors.list()
 
 
-@app.post("/brainscan/monitors")
+@app.post("/llminspect/monitors")
 async def post_monitor(request: Request):
     """Watch a direction, or a neuron named like "L5 N120": {direction, threshold, sign
     (above|below|either), min_tokens, phase (gen|all), label}. Runs recorded from now on raise a
@@ -841,7 +841,7 @@ async def post_monitor(request: Request):
     return monitor.describe()
 
 
-@app.patch("/brainscan/monitors/{mid}")
+@app.patch("/llminspect/monitors/{mid}")
 async def patch_monitor(mid: str, request: Request):
     body = await request.json()
     try:
@@ -852,7 +852,7 @@ async def patch_monitor(mid: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.delete("/brainscan/monitors/{mid}")
+@app.delete("/llminspect/monitors/{mid}")
 async def delete_monitor(mid: str):
     try:
         return await asyncio.to_thread(recorder().monitors.remove, mid)
@@ -860,7 +860,7 @@ async def delete_monitor(mid: str):
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.get("/brainscan/runs/{run_id}/flags")
+@app.get("/llminspect/runs/{run_id}/flags")
 async def run_flags(run_id: str):
     """Every monitor's flags on a recorded run, with the same rule on the random control."""
     rec = recorder()
@@ -870,19 +870,19 @@ async def run_flags(run_id: str):
     return await asyncio.to_thread(monitors.scan_run, rec.monitors, run.tape, rec.directions.describe())
 
 
-@app.get("/brainscan/flags")
+@app.get("/llminspect/flags")
 async def flags_across_runs(limit: int = 20):
     """Flag counts per enabled monitor on the most recent runs."""
     return await asyncio.to_thread(monitors.scan_runs, recorder(), limit)
 
 
-@app.post("/brainscan/checks/run")
+@app.post("/llminspect/checks/run")
 async def run_checks():
     """Every saved check now and, with edits applied, on the original weights."""
     return await asyncio.to_thread(workbench.run_checks, recorder())
 
 
-@app.post("/brainscan/workbench/export")
+@app.post("/llminspect/workbench/export")
 async def export_edited_model(request: Request):
     body = await request.json()
     try:
@@ -893,34 +893,34 @@ async def export_edited_model(request: Request):
 
 def _anatomy(rec: Recorder):
     if getattr(rec, "anatomy", None) is None:
-        raise HTTPException(404, "weight anatomy is off (BRAINSCAN_ANATOMY=0)")
+        raise HTTPException(404, "weight anatomy is off (LLMINSPECT_ANATOMY=0)")
     return rec.anatomy
 
 
-@app.get("/brainscan/anatomy")
+@app.get("/llminspect/anatomy")
 async def get_anatomy():
     rec = recorder()
     an = _anatomy(rec)
     return an.describe() | {"edited": an.edited_units(rec.edits), "edits_version": rec.edits.version}
 
 
-@app.get("/brainscan/anatomy/edited")
+@app.get("/llminspect/anatomy/edited")
 async def get_edited_units():
     rec = recorder()
     return {"edited": _anatomy(rec).edited_units(rec.edits), "edits_version": rec.edits.version}
 
 
-@app.get("/brainscan/anatomy/edges")
+@app.get("/llminspect/anatomy/edges")
 async def get_edges():
     return _anatomy(recorder()).describe_edges()
 
 
-@app.get("/brainscan/anatomy/params")
+@app.get("/llminspect/anatomy/params")
 async def get_params():
     return _anatomy(recorder()).param_list()
 
 
-@app.get("/brainscan/anatomy/units/{g}")
+@app.get("/llminspect/anatomy/units/{g}")
 async def get_unit(g: int):
     rec = recorder()
     an = _anatomy(rec)
@@ -930,7 +930,7 @@ async def get_unit(g: int):
         raise HTTPException(404, str(exc)) from exc
 
 
-@app.post("/brainscan/anatomy/units/{g}/lesion")
+@app.post("/llminspect/anatomy/units/{g}/lesion")
 async def lesion_unit(g: int, request: Request):
     """Add a workbench edit that scales this unit's output weights (factor 0 by default). It changes
     the weights only when the stack is applied."""
@@ -946,7 +946,7 @@ async def lesion_unit(g: int, request: Request):
     return edit.describe()
 
 
-@app.post("/brainscan/anatomy/lesion")
+@app.post("/llminspect/anatomy/lesion")
 async def lesion_units(request: Request):
     """One workbench edit that removes a set of units together (a knockout made permanent). With
     apply true the stack is applied right away, so the weights change now."""
@@ -966,7 +966,7 @@ async def lesion_units(request: Request):
     return {"edit": edit.describe(), "workbench": summary}
 
 
-@app.post("/brainscan/anatomy/tile")
+@app.post("/llminspect/anatomy/tile")
 async def post_tile(request: Request):
     body = await request.json()
     rec = recorder()
@@ -978,7 +978,7 @@ async def post_tile(request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.get("/brainscan/runs/{run_id}/anatomy")
+@app.get("/llminspect/runs/{run_id}/anatomy")
 async def get_run_anatomy(run_id: str):
     """Per-token unit activity for a run: a 4-byte little-endian header length, a JSON header
     (tape indices, unit count, unit-map key), then one byte per unit per token, row-major."""
@@ -995,7 +995,7 @@ async def _trace(fn, *args):
     """Run a tracer read off the event loop, mapping its failures to HTTP codes."""
     rec = recorder()
     if getattr(rec, "tracer", None) is None:
-        raise HTTPException(404, "tracing needs weight anatomy (BRAINSCAN_ANATOMY=1)")
+        raise HTTPException(404, "tracing needs weight anatomy (LLMINSPECT_ANATOMY=1)")
     try:
         return await asyncio.to_thread(getattr(rec.tracer, fn), *args)
     except Busy as exc:
@@ -1006,26 +1006,26 @@ async def _trace(fn, *args):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.get("/brainscan/runs/{run_id}/tokens/{t}/explain")
+@app.get("/llminspect/runs/{run_id}/tokens/{t}/explain")
 async def explain_token(run_id: str, t: int, target: str | None = None, weights: str = "current"):
     """Per-unit attribution of the next token's logit at tape slot t (see recorder/tracing.py).
     weights=original reads it with the applied weight edits lifted, for a before/after comparison."""
     return await _trace("explain", run_id, t, target, weights)
 
 
-@app.get("/brainscan/runs/{run_id}/tokens/{t}/neurons")
+@app.get("/llminspect/runs/{run_id}/tokens/{t}/neurons")
 async def token_neurons(run_id: str, t: int, unit: int, target: str | None = None, weights: str = "current"):
     """Each neuron of an MLP cluster at tape slot t: activation and share of the attribution."""
     return await _trace("neurons", run_id, t, unit, target, weights)
 
 
-@app.get("/brainscan/runs/{run_id}/tokens/{t}/producer")
+@app.get("/llminspect/runs/{run_id}/tokens/{t}/producer")
 async def token_producer(run_id: str, t: int):
     """The slot (and target) to explain to see why token t was written."""
     return await _trace("producer", run_id, t)
 
 
-@app.post("/brainscan/runs/{run_id}/tokens/{t}/knockout")
+@app.post("/llminspect/runs/{run_id}/tokens/{t}/knockout")
 async def token_knockout(run_id: str, t: int, body: dict):
     """Re-read the context with the given units removed and compare the next token's logit with the
     intact model: their total causal effect, next to their direct effect (see recorder/tracing.py)."""
@@ -1039,7 +1039,7 @@ async def token_knockout(run_id: str, t: int, body: dict):
     return await _trace("knockout", run_id, t, units, body.get("target"), body.get("weights") or "current", factor)
 
 
-@app.get("/brainscan/runs/{run_id}/tokens/{t}/attention")
+@app.get("/llminspect/runs/{run_id}/tokens/{t}/attention")
 async def token_attention(run_id: str, t: int, unit: int, weights: str = "current"):
     """A softmax-attention head's attention over the earlier tokens at tape slot t."""
     return await _trace("attention", run_id, t, unit, weights)
@@ -1048,18 +1048,18 @@ async def token_attention(run_id: str, t: int, unit: int, weights: str = "curren
 FORGET_STEPS = {"target": actions.forget_target, "try": actions.forget_try, "measure": actions.forget_measure}
 
 
-@app.post("/brainscan/actions/forget/{step}")
+@app.post("/llminspect/actions/forget/{step}")
 async def forget_step(step: str, request: Request):
     """Make the model forget a fact (see recorder/actions.py): target ranks the units behind the
     answer, try shows answers with and without them, measure checks the effect against random units,
-    facts to keep and neutral text. Keeping it is a grouped lesion (/brainscan/anatomy/lesion)."""
+    facts to keep and neutral text. Keeping it is a grouped lesion (/llminspect/anatomy/lesion)."""
     fn = FORGET_STEPS.get(step)
     if fn is None:
         raise HTTPException(404, f"no step {step}; use one of {sorted(FORGET_STEPS)}")
     body = await request.json()
     rec = recorder()
     if getattr(rec, "tracer", None) is None:
-        raise HTTPException(404, "actions need weight anatomy (BRAINSCAN_ANATOMY=1)")
+        raise HTTPException(404, "actions need weight anatomy (LLMINSPECT_ANATOMY=1)")
     try:
         return await asyncio.to_thread(fn, rec, body)
     except Busy as exc:
@@ -1070,7 +1070,7 @@ async def forget_step(step: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.websocket("/brainscan/live")
+@app.websocket("/llminspect/live")
 async def live(ws: WebSocket):
     await ws.accept()
     hub.clients.add(ws)

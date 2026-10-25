@@ -8,16 +8,16 @@ import torch
 import torch.nn.functional as F
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import neurons as nmod
-from brainscan.recorder.capture import Intervention
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import Recorder
-from brainscan.recorder.store import RunStore
-from brainscan.recorder.workbench import REFERENCE_TEXTS, _generate, _reference_ids
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import neurons as nmod
+from llminspect.recorder.capture import Intervention
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import Recorder
+from llminspect.recorder.store import RunStore
+from llminspect.recorder.workbench import REFERENCE_TEXTS, _generate, _reference_ids
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 
@@ -143,22 +143,22 @@ def test_endpoints(rec):
     server.state.update(recorder=rec, status="ready", step="ready", error=None)
     try:
         client = TestClient(server.app)
-        assert client.get("/brainscan/neurons").json()["layers"] == rec.s.n_layers
-        r = client.get("/brainscan/neurons/L2 N5", params={"dose": 0.5})
+        assert client.get("/llminspect/neurons").json()["layers"] == rec.s.n_layers
+        r = client.get("/llminspect/neurons/L2 N5", params={"dose": 0.5})
         assert r.status_code == 200 and r.json()["steer_effect"]["plus"]["dose"] == 0.5
-        assert client.get("/brainscan/neurons/bad").status_code == 400
-        assert client.get("/brainscan/neurons/L99 N0").status_code == 404
-        assert client.get("/brainscan/neurons/L2 N999999").status_code == 404
-        iv = client.post("/brainscan/neurons/steer", json={"neuron": "L2 N5", "dose": 1}).json()
+        assert client.get("/llminspect/neurons/bad").status_code == 400
+        assert client.get("/llminspect/neurons/L99 N0").status_code == 404
+        assert client.get("/llminspect/neurons/L2 N999999").status_code == 404
+        iv = client.post("/llminspect/neurons/steer", json={"neuron": "L2 N5", "dose": 1}).json()
         assert iv["mode"] == "write" and iv["direction"] == "L2 N5"
         assert iv["value"] == pytest.approx(rec.neurons.calibration()["median"][2], rel=1e-5)
-        assert client.get("/brainscan/neurons").json()["steering"][0]["id"] == iv["id"]
-        assert client.delete(f"/brainscan/interventions/{iv['id']}").status_code == 200
-        assert client.post("/brainscan/neurons/steer", json={"neuron": "L2 N5", "dose": 1e9}).status_code == 400
-        sw = client.post("/brainscan/neurons/sweep", json={"prompt": "Hi", "steers": [{"neuron": "L2 N5", "dose": 2}],
+        assert client.get("/llminspect/neurons").json()["steering"][0]["id"] == iv["id"]
+        assert client.delete(f"/llminspect/interventions/{iv['id']}").status_code == 200
+        assert client.post("/llminspect/neurons/steer", json={"neuron": "L2 N5", "dose": 1e9}).status_code == 400
+        sw = client.post("/llminspect/neurons/sweep", json={"prompt": "Hi", "steers": [{"neuron": "L2 N5", "dose": 2}],
                                                            "factors": [0, 1], "max_tokens": 4})
         assert sw.status_code == 200 and len(sw.json()) == 2
-        assert client.post("/brainscan/neurons/sweep", json={"prompt": "Hi", "steers": [{"dose": 2}]}).status_code == 400
+        assert client.post("/llminspect/neurons/sweep", json={"prompt": "Hi", "steers": [{"dose": 2}]}).status_code == 400
     finally:
         server.state.clear()
         server.state.update(saved)

@@ -6,8 +6,8 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, LlamaConfig, Qwen3_5TextConfig
 
-from brainscan.recorder.capture import Intervention, LayerTap
-from brainscan.recorder.graphs import DecodeGraphs
+from llminspect.recorder.capture import Intervention, LayerTap
+from llminspect.recorder.graphs import DecodeGraphs
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs need a GPU")
 

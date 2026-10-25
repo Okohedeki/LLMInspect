@@ -83,7 +83,7 @@ defineVerbs([
     id: "steer", group: "Adjust", label: "Steer",
     lead: "Push a direction (a tone, a language, a trait) into the model while it writes. The weights don't change.",
     steps: [
-      findDirection("Give two sets of examples, one per line, that differ only in the trait. Brainscan finds the direction between them at every layer; save the best layer to the direction bank."),
+      findDirection("Give two sets of examples, one per line, that differ only in the trait. LLMInspect finds the direction between them at every layer; save the best layer to the direction bank."),
       { id: "steer", label: "Steer", view: "scanner", focus: "#h-steer", done: () => st("steering") > 0,
         what: "Pick the direction, a layer and a strength under Steering, then Add. Start small: 0.05 of the residual's size. Or steer a saved knob (a named set of neurons), or single neurons, in the Neurons view.",
         tools: ["scanner:steer", "scanner:unsteer"], also: ["neurons:knob", "neurons:go"] },
@@ -99,7 +99,7 @@ defineVerbs([
     id: "probe", group: "Analyze", label: "Probe",
     lead: "Read a state on every token (formal or casual, sure or hedging, any contrast you can give examples of) beside a random direction as the control.",
     steps: [
-      findDirection("Give two sets of examples, one per line, for the state you want to read. Brainscan scores the direction between them on held-out examples at every layer; save it."),
+      findDirection("Give two sets of examples, one per line, for the state you want to read. LLMInspect scores the direction between them on held-out examples at every layer; save it."),
       record("Ask the model, or point an agent at the endpoint (see the guide). Every new token is read against every saved direction as it is recorded."),
       { id: "read", label: "Read", view: "scanner",
         what: "The z lane of the timeline shows each direction per token, with a dashed random direction as the control; the grey band is ±2. Click a token for its projections.",

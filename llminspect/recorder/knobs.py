@@ -61,7 +61,7 @@ class KnobBank:
                 raise ValueError(f"version {raw.get('version')!r}")
             if raw.get("shape") != self.shape:
                 self.error = (f"Two models share the name {self.nm.s.slug!r}: {self.path} holds knobs for a model "
-                              f"shaped {raw.get('shape')}, not {self.shape}. Set BRAINSCAN_MODEL_NAME to tell them apart.")
+                              f"shaped {raw.get('shape')}, not {self.shape}. Set LLMINSPECT_MODEL_NAME to tell them apart.")
                 return
             self.items = [self._entry(k["name"], [(*parse(e["neuron"]), e["dose"]) for e in k["neurons"]],
                                       k.get("description", ""), k["created"], k["updated"]) for k in raw["knobs"]]

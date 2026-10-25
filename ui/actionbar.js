@@ -13,7 +13,7 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const TAB = { scanner: "Watch", weights: "Trace", workbench: "Tune", neurons: "Neurons" };
 const TONE = { Test: "ex", Steer: "ex", Change: "ch", Verify: "vf", Ship: "vf", Monitor: "vf" };
-const SAVED = "brainscan-action";
+const SAVED = "llminspect-action";
 
 const BARS = new Map();   // tab -> { groups, context, actions, states, el, sig, note }
 const PENDING = new Map(); // tab -> tools other modules added before the screen defined its bar
@@ -29,7 +29,7 @@ const textOf = (x) => { try { return typeof x === "function" ? x() : x || ""; } 
 const isDone = (s) => { try { return !!s.done?.(); } catch { return false; } };
 /** "tab:id" → the tool and the screen it belongs to. */
 const toolOf = (ref) => { const [tab, id] = ref.split(":"); return { tab, a: BARS.get(tab)?.actions.find((x) => x.id === id) }; };
-const show = (tab) => document.dispatchEvent(new CustomEvent("brainscan:show", { detail: tab }));
+const show = (tab) => document.dispatchEvent(new CustomEvent("llminspect:show", { detail: tab }));
 const runOn = (tab, run) => { if (tab !== view) { show(tab); setTimeout(run, 120); } else run(); };
 
 /** What a screen reports through its bar's state(), or the shared edit and check state. */
@@ -351,8 +351,8 @@ function runDo(i) {
 }
 
 function boot() {
-  document.addEventListener("brainscan:pick", (ev) => pick(ev.detail));  // from the guide
-  document.addEventListener("brainscan:view", (ev) => {
+  document.addEventListener("llminspect:pick", (ev) => pick(ev.detail));  // from the guide
+  document.addEventListener("llminspect:view", (ev) => {
     view = ev.detail;
     // The forget-a-fact flow is ablation, guided: it has its own steps.
     if (view === "actions") {
@@ -363,7 +363,7 @@ function boot() {
     alignStep();
     if (BARS.has(view)) render(view);
   });
-  document.addEventListener("brainscan:edit-state", (ev) => {
+  document.addEventListener("llminspect:edit-state", (ev) => {
     const d = ev.detail || {};
     for (const k of Object.keys(SHARED)) if (k in d) SHARED[k] = d[k];
     if (BARS.has(view)) render(view);

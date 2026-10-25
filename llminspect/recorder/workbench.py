@@ -335,9 +335,9 @@ def export(recorder, path: str) -> dict:
         s.tokenizer.save_pretrained(out)
         record = {"base_model": s.spec, "base_name": s.name, "base_provenance": s.provenance,
                   "edits": recorder.edits.active(), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-                  "tool": "brainscan workbench",
+                  "tool": "llminspect workbench",
                   "note": "Research variant with edited weights. Functional changes only; see edits for exactly "
                           "what was changed."}
-        (out / "brainscan_edits.json").write_text(json.dumps(record, indent=2))
+        (out / "llminspect_edits.json").write_text(json.dumps(record, indent=2))
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     return {"path": str(out), "bytes": size, "edits": len(record["edits"])}

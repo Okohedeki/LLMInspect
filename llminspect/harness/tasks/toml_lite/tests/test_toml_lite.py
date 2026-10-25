@@ -11,7 +11,7 @@ def test_booleans():
 
 
 def test_string():
-    assert parse_line('name = "brainscan"') == ("name", "brainscan")
+    assert parse_line('name = "llminspect"') == ("name", "llminspect")
 
 
 def test_blank_and_comment_lines():

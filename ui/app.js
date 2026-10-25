@@ -1,4 +1,4 @@
-// Brainscan scanner: a live view of a model's internals, time-locked to what the agent does.
+// LLMInspect scanner: a live view of a model's internals, time-locked to what the agent does.
 import { defineBar, noteBar, refreshBar } from "/ui/actionbar.js";
 //
 // One shared x axis (tokens on the run's tape) carries every track:
@@ -246,7 +246,7 @@ function draw() {
     ov.innerHTML = `<b>Loading recording…</b>`;
   } else if (!n && S.status?.status === "ready") {
     ov.hidden = false;
-    ov.innerHTML = `<div><b>No tokens recorded in this run yet.</b></div><div class="empty">Point any OpenAI-compatible harness at <code>${location.origin}/v1</code>, or run<br><code>scripts/run.sh -m brainscan.harness.mini_agent --task fix_fizzbuzz</code></div>`;
+    ov.innerHTML = `<div><b>No tokens recorded in this run yet.</b></div><div class="empty">Point any OpenAI-compatible harness at <code>${location.origin}/v1</code>, or run<br><code>scripts/run.sh -m llminspect.harness.mini_agent --task fix_fizzbuzz</code></div>`;
   } else if (S.status && S.status.status !== "ready") {
     ov.hidden = false;
     ov.innerHTML = S.status.status === "error" ? `<b>Recorder failed to start</b><div class="empty">${esc(S.status.error)}</div>`
@@ -527,7 +527,7 @@ async function selectToken(t, scrollIntoView = false) {
   });
   schedule();
   try {
-    const d = await api(`/brainscan/runs/${encodeURIComponent(S.runId)}/tokens/${t}`);
+    const d = await api(`/llminspect/runs/${encodeURIComponent(S.runId)}/tokens/${t}`);
     if (S.selected === t) renderInspector(d);
   } catch (err) { $("#inspector").innerHTML = `<p class="empty">${esc(err.message)}</p>`; }
 }
@@ -569,8 +569,8 @@ function renderInspector(d) {
     <div><h3>Logit lens: each layer's guess for this slot</h3>${lens || '<p class="empty">No lens for this token.</p>'}</div></div>`;
   $("#inspector").innerHTML = html;
   $("#insp-trace")?.addEventListener("click", () => {
-    document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "weights" }));
-    document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { word: d.t } }));
+    document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "weights" }));
+    document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { word: d.t } }));
   });
 }
 
@@ -598,8 +598,8 @@ function renderSteering() {
       <span class="desc">${esc(what)} · ${esc(iv.direction)} @ L${iv.layer} · ${esc(iv.phase)}</span><button aria-label="Remove">✕</button></li>`;
   }).join("") || `<li class="muted" style="border:none;background:none;padding:0">No interventions. Readouts are passive.</li>`;
   $("#iv-list").querySelectorAll("li[data-id]").forEach((li) => {
-    li.querySelector("input").onchange = async (ev) => { await api(`/brainscan/interventions/${li.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: ev.target.checked }) }); pollStatus(); };
-    li.querySelector("button").onclick = async () => { await api(`/brainscan/interventions/${li.dataset.id}`, { method: "DELETE" }); pollStatus(); };
+    li.querySelector("input").onchange = async (ev) => { await api(`/llminspect/interventions/${li.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: ev.target.checked }) }); pollStatus(); };
+    li.querySelector("button").onclick = async () => { await api(`/llminspect/interventions/${li.dataset.id}`, { method: "DELETE" }); pollStatus(); };
   });
   $("#dir-list").innerHTML = (st.directions || []).map((d) => `<li><div><span class="name">${esc(d.name)}</span> <span class="muted">· L${d.layer} · ${esc(d.kind)}</span></div><div class="how">${esc(d.description || "")}</div><div class="how">${esc(d.construction || "")}</div></li>`).join("");
   const sel = $("#iv-direction"), prev = sel.value;
@@ -622,7 +622,7 @@ function setupSteering() {
     const mode = $("#iv-mode").value, num = Number($("#iv-strength").value);
     const body = { direction: $("#iv-direction").value, layer: Number($("#iv-layer").value), mode, phase: $("#iv-phase").value };
     if (mode === "add") body.strength = num; if (mode === "clamp") body.value = num;
-    try { await api("/brainscan/interventions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+    try { await api("/llminspect/interventions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
     catch (err) { alert(err.message); }
     pollStatus();
   });
@@ -642,7 +642,7 @@ function renderRunSelect() {
   if (S.runId) sel.value = S.runId;
 }
 async function loadRuns() {
-  try { S.runs = await api("/brainscan/runs"); } catch { S.runs = []; }
+  try { S.runs = await api("/llminspect/runs"); } catch { S.runs = []; }
   renderRunSelect();
 }
 async function openRun(id) {
@@ -650,12 +650,12 @@ async function openRun(id) {
   $("#inspector").innerHTML = `<p class="empty">Click any token in the scope or transcript to see what the model predicted there, layer by layer.</p>`;
   $("#insp-where").textContent = "";
   renderRunSelect();
-  document.dispatchEvent(new CustomEvent("brainscan:run", { detail: id }));  // the Weights tab follows the same run
+  document.dispatchEvent(new CustomEvent("llminspect:run", { detail: id }));  // the Weights tab follows the same run
   if (!id) { renderTranscript(); schedule(); return; }
   // Live messages for this run that arrive while the snapshot loads are buffered, then replayed.
   S.loadingRun = id; S.buffer = [];
   try {
-    const [run, tape] = await Promise.all([api(`/brainscan/runs/${encodeURIComponent(id)}`), api(`/brainscan/runs/${encodeURIComponent(id)}/tape`)]);
+    const [run, tape] = await Promise.all([api(`/llminspect/runs/${encodeURIComponent(id)}`), api(`/llminspect/runs/${encodeURIComponent(id)}/tape`)]);
     if (S.runId !== id) return;
     S.meta = run.meta; S.events = run.events; S.messages = run.messages;
     for (const r of tape) S.tape[r.t] = r;
@@ -682,14 +682,14 @@ function setGenerating(g) {
   S.genAt = performance.now();
   S.generating = g;
   refreshBar("scanner");
-  document.dispatchEvent(new CustomEvent("brainscan:generating", { detail: g }));
+  document.dispatchEvent(new CustomEvent("llminspect:generating", { detail: g }));
 }
 
 function handle(msg) {
   // A monitor fired, in any run (ui/monitors.js shows it).
-  if (msg.k === "ev" && msg.ev?.type === "monitor") document.dispatchEvent(new CustomEvent("brainscan:flag", { detail: { run: msg.run, ev: msg.ev } }));
+  if (msg.k === "ev" && msg.ev?.type === "monitor") document.dispatchEvent(new CustomEvent("llminspect:flag", { detail: { run: msg.run, ev: msg.ev } }));
   if (msg.k === "req") setGenerating({ run: msg.run, req: msg.req });
-  else if (msg.k === "done") { setGenerating(null); document.dispatchEvent(new CustomEvent("brainscan:done", { detail: msg })); }
+  else if (msg.k === "done") { setGenerating(null); document.dispatchEvent(new CustomEvent("llminspect:done", { detail: msg })); }
   if (S.loadingRun && msg.run === S.loadingRun && ["toks", "ev", "msg", "done"].includes(msg.k)) {
     S.buffer.push(msg);
     return;
@@ -740,7 +740,7 @@ function handle(msg) {
 }
 
 function connect() {
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/brainscan/live`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/llminspect/live`);
   S.ws = ws;
   ws.onopen = () => { S.wsOpen = true; $("#live-dot").classList.add("on"); };
   ws.onclose = () => { S.wsOpen = false; $("#live-dot").classList.remove("on"); setTimeout(connect, 1500); };
@@ -749,14 +749,14 @@ function connect() {
 
 async function pollStatus() {
   const asked = performance.now();
-  try { S.status = await api("/brainscan/status"); } catch (err) { S.status = { status: "error", error: err.message }; }
+  try { S.status = await api("/llminspect/status"); } catch (err) { S.status = { status: "error", error: err.message }; }
   const st = S.status;
   // A live "req" or "done" that arrived while this poll was out is newer than the poll.
   const gen = st.generating ? { run: st.generating.run, req: st.generating.req } : null;
   if (S.genAt < asked && JSON.stringify(gen) !== JSON.stringify(S.generating)) setGenerating(gen);
   if (st.model && st.model.spec !== S.modelSpec) {
     // The recorder switched models: the Trace and Tune views rebuild for it, the run list refreshes.
-    if (S.modelSpec !== undefined) { document.dispatchEvent(new CustomEvent("brainscan:model", { detail: st.model })); loadRuns(); }
+    if (S.modelSpec !== undefined) { document.dispatchEvent(new CustomEvent("llminspect:model", { detail: st.model })); loadRuns(); }
     S.modelSpec = st.model.spec;
   }
   if (st.model) {
@@ -777,20 +777,20 @@ async function pollStatus() {
   if (dirsChanged) renderLegend();
   renderSteering();
   refreshBar("scanner");
-  document.dispatchEvent(new CustomEvent("brainscan:status", { detail: st }));  // the Neurons view reads the model's name and its knobs
+  document.dispatchEvent(new CustomEvent("llminspect:status", { detail: st }));  // the Neurons view reads the model's name and its knobs
   schedule();
 }
 
 // ---------------------------------------------------------------- theme and boot
 function setupTheme() {
-  const saved = (() => { try { return localStorage.getItem("brainscan-theme"); } catch { return null; } })();
+  const saved = (() => { try { return localStorage.getItem("llminspect-theme"); } catch { return null; } })();
   if (saved) document.documentElement.dataset.theme = saved;
   $("#theme-toggle").onclick = () => {
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
     const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("brainscan-theme", next); } catch { /* storage unavailable */ }
+    try { localStorage.setItem("llminspect-theme", next); } catch { /* storage unavailable */ }
     readColors(); renderLegend(); renderTranscript(); schedule();
   };
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); renderLegend(); schedule(); });
@@ -823,11 +823,11 @@ function setupBar() {
       { id: "stop", group: "Run", label: "Stop", hint: "End the answer at the next token, keeping what it wrote",
         need: () => (S.generating ? null : "a request that is generating"),
         run: async () => {
-          try { await api("/brainscan/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); noteBar("scanner", "Stopping at the next token"); }
+          try { await api("/llminspect/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); noteBar("scanner", "Stopping at the next token"); }
           catch (err) { noteBar("scanner", `Couldn't stop: ${err.message}`); }
         } },
       { id: "model", group: "Run", label: "Switch model", hint: "Any open-weights model already on this machine",
-        run: () => document.dispatchEvent(new CustomEvent("brainscan:models")) },
+        run: () => document.dispatchEvent(new CustomEvent("llminspect:models")) },
       { id: "fit", group: "Read", label: "Fit timeline", hint: "Show the whole run on the timeline",
         need: () => (S.view.length ? null : "a run with tokens"), run: () => $("#fit").click() },
       { id: "live", group: "Read", label: () => (S.follow ? "Following live" : "Follow live"), hint: "Keep the newest token in view",
@@ -837,14 +837,14 @@ function setupBar() {
       { id: "unsteer", group: "Steer", label: "Remove steering", hint: "Turn every intervention off and remove it",
         need: () => (steering().length ? null : "steering to remove"),
         run: async () => {
-          for (const iv of steering()) await api(`/brainscan/interventions/${iv.id}`, { method: "DELETE" });
+          for (const iv of steering()) await api(`/llminspect/interventions/${iv.id}`, { method: "DELETE" });
           await pollStatus(); noteBar("scanner", "Steering removed");
         } },
       { id: "trace", group: "Hand off", label: "Trace this token →", hint: "Open it in Trace: the layers, units and knockouts behind it",
         need: traceable,
         run: () => {
-          document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "weights" }));
-          document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { word: S.selected } }));
+          document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "weights" }));
+          document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { word: S.selected } }));
         } },
     ],
   });
@@ -852,11 +852,11 @@ function setupBar() {
 
 async function boot() {
   setupTheme(); readColors(); setupScopeInput(); setupSteering(); setupBar();
-  document.addEventListener("brainscan:select", (ev) => { if (S.runId && ev.detail?.t != null) selectToken(ev.detail.t, true); });  // a flag picked
-  document.addEventListener("brainscan:steering", pollStatus);  // steering changed elsewhere (a knob in Neurons)
+  document.addEventListener("llminspect:select", (ev) => { if (S.runId && ev.detail?.t != null) selectToken(ev.detail.t, true); });  // a flag picked
+  document.addEventListener("llminspect:steering", pollStatus);  // steering changed elsewhere (a knob in Neurons)
   $("#run-select").onchange = (ev) => openRun(ev.target.value);
   // A message sent from a composer: open its run in every view as soon as it appears (ui/chat.js).
-  document.addEventListener("brainscan:expect-run", (ev) => {
+  document.addEventListener("llminspect:expect-run", (ev) => {
     if (ev.detail === S.runId) return;  // continuing the open conversation
     S.expectRun = ev.detail;
     if (S.runs.some((r) => r.id === ev.detail)) { S.expectRun = null; openRun(ev.detail); }

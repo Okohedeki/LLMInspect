@@ -1,5 +1,5 @@
 // Path search over the unit graph. Composition edges (each unit's strongest inputs and outputs, from
-// /brainscan/anatomy/edges) form a layered graph: an edge a -> b means b's input weights read a's
+// /llminspect/anatomy/edges) form a layered graph: an edge a -> b means b's input weights read a's
 // output directions, scored in multiples of chance. A path's score is the product of its edges'
 // strength above chance, optionally times each unit's activity at the current token, so a path is
 // strong only if every hop is.

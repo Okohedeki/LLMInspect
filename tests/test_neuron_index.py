@@ -8,14 +8,14 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import neuron_index as ni
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import neuron_index as ni
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 TOKENS = 3000
@@ -111,20 +111,20 @@ def test_the_index_is_kept_and_the_card_reads_it(rec):
 def test_a_corpus_of_your_own(rec, tmp_path, monkeypatch):
     (tmp_path / "a.txt").write_text("The kettle boiled.\n\nThe cat slept on the warm stones by the fire.")
     (tmp_path / "b.jsonl").write_text('{"text": "Quarterly revenue rose by four percent."}\nnot json\n{"other": 1}\n')
-    monkeypatch.setenv("BRAINSCAN_CORPUS", str(tmp_path))
+    monkeypatch.setenv("LLMINSPECT_CORPUS", str(tmp_path))
     texts, sources = ni.corpus_texts(rec)
     assert [t for _, t in texts] == ["The kettle boiled.", "The cat slept on the warm stones by the fire.",
                                      "Quarterly revenue rose by four percent."]
-    assert "BRAINSCAN_CORPUS" in sources[0]
+    assert "LLMINSPECT_CORPUS" in sources[0]
     empty = tmp_path / "empty"
     empty.mkdir()
-    monkeypatch.setenv("BRAINSCAN_CORPUS", str(empty))
+    monkeypatch.setenv("LLMINSPECT_CORPUS", str(empty))
     with pytest.raises(ValueError):
         ni.corpus_texts(rec)
 
 
 def test_text_in_the_data_folder_comes_after_the_default_mix(rec, monkeypatch):
-    monkeypatch.delenv("BRAINSCAN_CORPUS", raising=False)
+    monkeypatch.delenv("LLMINSPECT_CORPUS", raising=False)
     base, sources = ni.corpus_texts(rec)
     folder = rec.store.root / "corpus"
     folder.mkdir()
@@ -146,15 +146,15 @@ def test_endpoints(rec):
     server.state.update(recorder=rec, status="ready", step="ready", error=None)
     try:
         client = TestClient(server.app)
-        assert client.get("/brainscan/neurons/index").json()["status"] == "ready"
-        r = client.get("/brainscan/neurons/search", params={"q": "Canberra", "limit": 5})
+        assert client.get("/llminspect/neurons/index").json()["status"] == "ready"
+        r = client.get("/llminspect/neurons/search", params={"q": "Canberra", "limit": 5})
         assert r.status_code == 200 and len(r.json()["fires_on"]) == 5
-        assert client.get("/brainscan/neurons/search", params={"q": "a"}).status_code == 400
-        assert client.post("/brainscan/neurons/index", json={"max_tokens": "x"}).status_code == 400
-        job = client.post("/brainscan/neurons/index", json={"max_tokens": 600}).json()
+        assert client.get("/llminspect/neurons/search", params={"q": "a"}).status_code == 400
+        assert client.post("/llminspect/neurons/index", json={"max_tokens": "x"}).status_code == 400
+        job = client.post("/llminspect/neurons/index", json={"max_tokens": 600}).json()
         assert job["status"] == "building"
         for _ in range(300):
-            st = client.get("/brainscan/neurons/index").json()
+            st = client.get("/llminspect/neurons/index").json()
             if st["status"] != "building":
                 break
             time.sleep(0.1)

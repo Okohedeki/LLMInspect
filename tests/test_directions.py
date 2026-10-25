@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-TINY = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+TINY = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 pytestmark = pytest.mark.skipif(not (TINY / "config.json").exists(),
                                 reason="tiny test model missing; run scripts/make_tiny_model.py")
 
@@ -12,9 +12,9 @@ B = ["Where is the station?", "The weather is nice.", "Close the door.", "I woul
 
 @pytest.fixture(scope="module")
 def bank(tmp_path_factory):
-    from brainscan.recorder.capture import LayerTap
-    from brainscan.recorder.directions import DirectionBank
-    from brainscan.recorder.model import Subject
+    from llminspect.recorder.capture import LayerTap
+    from llminspect.recorder.directions import DirectionBank
+    from llminspect.recorder.model import Subject
     subject = Subject(str(TINY), device="cpu")
     return DirectionBank(tmp_path_factory.mktemp("dirs"), subject, LayerTap(subject))
 

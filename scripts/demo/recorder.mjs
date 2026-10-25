@@ -1,9 +1,9 @@
-// Records demo videos of the Brainscan UI: drives a headless Chrome over the DevTools protocol,
+// Records demo videos of the LLMInspect UI: drives a headless Chrome over the DevTools protocol,
 // captures screencast frames, and stitches them into MP4s with ffmpeg. Scenes live in scenes.mjs.
 //
 //   node scripts/demo/recorder.mjs <out-dir> [scene names...]
 //
-// Needs a running recorder (BRAINSCAN_URL, default http://localhost:8765/), Chrome (CHROME) and ffmpeg
+// Needs a running recorder (LLMINSPECT_URL, default http://localhost:8765/), Chrome (CHROME) and ffmpeg
 // (FFMPEG) on this machine, and Node 22+ for the built-in WebSocket. Scenes run in order and build on
 // each other (the trace scenes use the chat the "ask" scene creates), and they change the recorder's
 // state: weight edits, checks and steering are reset as each scene needs. Keep <out-dir> short on
@@ -19,7 +19,7 @@ import { SCENES, HELPER } from "./scenes.mjs";
 
 const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const FFMPEG = process.env.FFMPEG || "ffmpeg";
-const APP = process.env.BRAINSCAN_URL || "http://localhost:8765/";
+const APP = process.env.LLMINSPECT_URL || "http://localhost:8765/";
 const W = 1920, H = 1080, PORT = 9333;
 const ROOT = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const OUT = process.argv[2] || join(ROOT, "out");
@@ -139,7 +139,7 @@ try {
   await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
   await cdp("Page.navigate", { url: APP });
   await sleep(2500);
-  await evaluate(`localStorage.setItem("brainscan-guide-seen", "1"); localStorage.setItem("brainscan-convo", "1"); localStorage.setItem("brainscan-view", "weights"); localStorage.setItem("brainscan-action", JSON.stringify({ verb: "explore", step: 1 })); true`);
+  await evaluate(`localStorage.setItem("llminspect-guide-seen", "1"); localStorage.setItem("llminspect-convo", "1"); localStorage.setItem("llminspect-view", "weights"); localStorage.setItem("llminspect-action", JSON.stringify({ verb: "explore", step: 1 })); true`);
   await cdp("Page.reload", {});
   await sleep(5000);
   for (const scene of SCENES) {

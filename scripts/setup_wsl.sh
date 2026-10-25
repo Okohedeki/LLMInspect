@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time environment setup inside WSL2. Creates ~/.venvs/brainscan with a
+# One-time environment setup inside WSL2. Creates ~/.venvs/llminspect with a
 # CUDA build of torch plus the recorder's dependencies, then prints versions.
 set -euo pipefail
 
@@ -8,7 +8,7 @@ if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 
-VENV="$HOME/.venvs/brainscan"
+VENV="$HOME/.venvs/llminspect"
 [ -d "$VENV" ] || uv venv "$VENV" --python 3.12
 source "$VENV/bin/activate"
 

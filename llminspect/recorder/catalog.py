@@ -1,8 +1,8 @@
 """Open-weights models already on this machine, for the model picker.
 
-Brainscan never downloads a model here. The catalog lists Hugging Face checkpoint folders (a
-config.json beside safetensors weights) under Brainscan's model cache, the Hugging Face hub cache
-and any folders in BRAINSCAN_MODEL_DIRS, plus Ollama tags, which are dequantized to bf16 once on
+LLMInspect never downloads a model here. The catalog lists Hugging Face checkpoint folders (a
+config.json beside safetensors weights) under LLMInspect's model cache, the Hugging Face hub cache
+and any folders in LLMINSPECT_MODEL_DIRS, plus Ollama tags, which are dequantized to bf16 once on
 first load (model.prepare). Each entry carries the memory estimate the loader itself checks
 (model._check_vram: weight bytes plus headroom), so the picker can say up front what won't fit.
 """
@@ -174,7 +174,7 @@ def scan(extra_dirs: list[Path] | None = None, current: str | None = None,
             info = _checkpoint(folder, types)
             if info is None:
                 continue
-            prov = _json(folder / "brainscan_provenance.json") or {}
+            prov = _json(folder / "llminspect_provenance.json") or {}
             if prov.get("source") == "ollama":  # converted earlier: load it by its tag to keep provenance
                 spec, source = prov["spec"], "ollama"
                 info["notes"].insert(0, f"Dequantized from {prov.get('quantization') or 'a quantized GGUF'}: "

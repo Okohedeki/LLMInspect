@@ -1,7 +1,7 @@
 // Monitors (the Monitor action): flag a run when a probe fires. A monitor is a rule on one direction
 // of the bank: its z-score past a threshold for some tokens in a row. The recorder checks every
 // enabled monitor as tokens are recorded and adds a "monitor" event where the rule is met
-// (brainscan/recorder/monitors.py). This panel in Watch adds and lists monitors, shows the open
+// (llminspect/recorder/monitors.py). This panel in Watch adds and lists monitors, shows the open
 // run's flags beside how often the random direction trips the same rule, and scans recent runs.
 // Its tools join Watch's bar (extendBar). A rule may also watch one neuron ("L5 N120", the
 // neurons of a saved knob: ui/neurons.js): its activation, z-scored per token against its usual range.
@@ -45,7 +45,7 @@ function message(text, tone = "") {
 // ---------------------------------------------------------------- state
 async function refresh() {
   try {
-    const [list, status, knobs] = await Promise.all([api("/brainscan/monitors"), api("/brainscan/status"), api("/brainscan/knobs").catch(() => null)]);
+    const [list, status, knobs] = await Promise.all([api("/llminspect/monitors"), api("/llminspect/status"), api("/llminspect/knobs").catch(() => null)]);
     M.list = list;
     M.dirs = status.directions || [];
     M.knobs = knobs?.knobs || [];  // an older recorder has none
@@ -59,7 +59,7 @@ async function loadFlags() {
   M.flagsFor = id;
   if (!id || !M.list.length) { M.flags = null; renderFlags(); return; }
   try {
-    const flags = await api(`/brainscan/runs/${encodeURIComponent(id)}/flags`);
+    const flags = await api(`/llminspect/runs/${encodeURIComponent(id)}/flags`);
     if (M.flagsFor === id) M.flags = flags;
   } catch { M.flags = null; }
   renderFlags();
@@ -157,7 +157,7 @@ async function addMonitor(ev) {
   const body = { direction: $("#mon-dir").value, sign: $("#mon-sign").value, threshold: Number($("#mon-z").value),
     min_tokens: Number($("#mon-n").value), phase: $("#mon-phase").value };
   try {
-    const m = await send("POST", "/brainscan/monitors", body);
+    const m = await send("POST", "/llminspect/monitors", body);
     message(`Watching: ${m.rule}. Runs recorded from now on are checked as they go.`, "ok");
     await refresh();
   } catch (err) { message(err.message, "error"); }
@@ -167,8 +167,8 @@ async function onListClick(ev) {
   const li = ev.target.closest("li[data-id]");
   if (!li) return;
   try {
-    if (ev.target.matches("[data-remove]")) await send("DELETE", `/brainscan/monitors/${li.dataset.id}`);
-    else if (ev.target.matches("[data-toggle]")) await send("PATCH", `/brainscan/monitors/${li.dataset.id}`, { enabled: ev.target.checked });
+    if (ev.target.matches("[data-remove]")) await send("DELETE", `/llminspect/monitors/${li.dataset.id}`);
+    else if (ev.target.matches("[data-toggle]")) await send("PATCH", `/llminspect/monitors/${li.dataset.id}`, { enabled: ev.target.checked });
     else return;
     M.across = null; renderAcross();
     await refresh();
@@ -177,11 +177,11 @@ async function onListClick(ev) {
 
 function selectToken(t) {
   M.at = t;
-  document.dispatchEvent(new CustomEvent("brainscan:select", { detail: { t } }));
+  document.dispatchEvent(new CustomEvent("llminspect:select", { detail: { t } }));
 }
 function traceToken(t) {
-  document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "weights" }));
-  document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { word: t } }));
+  document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "weights" }));
+  document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { word: t } }));
 }
 function nextFlag() {
   const fl = flagList();
@@ -194,7 +194,7 @@ function nextFlag() {
 async function scanRuns() {
   const btn = $("#mon-scan");
   if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
-  try { M.across = await api("/brainscan/flags?limit=20"); renderAcross(); scrollTo("#mon-across"); }
+  try { M.across = await api("/llminspect/flags?limit=20"); renderAcross(); scrollTo("#mon-across"); }
   catch (err) { message(err.message, "error"); }
   finally { if (btn) { btn.disabled = false; btn.textContent = "Scan recent runs"; } }
 }
@@ -239,18 +239,18 @@ function boot() {
   $("#mon-scan").addEventListener("click", scanRuns);
   for (const id of ["#mon-run", "#mon-across"]) $(id).addEventListener("click", onPanelClick);
   $("#run-select").addEventListener("change", () => { M.at = null; M.flags = null; renderFlags(); loadFlagsSoon(); });
-  document.addEventListener("brainscan:run", () => { M.at = null; loadFlagsSoon(); });
+  document.addEventListener("llminspect:run", () => { M.at = null; loadFlagsSoon(); });
   // A flag raised live (ui/app.js relays the recorder's "monitor" events).
-  document.addEventListener("brainscan:flag", (ev) => {
+  document.addEventListener("llminspect:flag", (ev) => {
     const { run, ev: e } = ev.detail || {};
     if (!e) return;
     noteBar("scanner", `⚑ ${e.data?.name || "monitor"} fired at t${e.t} (z ${Number(e.data?.z).toFixed(2)})${run === runId() ? "" : ` in ${run}`}`);
     if (run === runId()) loadFlagsSoon();
   });
-  document.addEventListener("brainscan:done", (ev) => { if (ev.detail?.run === runId()) loadFlagsSoon(); });
-  document.addEventListener("brainscan:view", (ev) => { if (ev.detail === "scanner") refresh(); });  // directions saved in Tune, knobs in Neurons
-  document.addEventListener("brainscan:monitors", () => { M.across = null; renderAcross(); refresh(); });  // rules added from a knob (ui/neurons.js)
-  document.addEventListener("brainscan:model", () => { M.across = null; renderAcross(); refresh(); });
+  document.addEventListener("llminspect:done", (ev) => { if (ev.detail?.run === runId()) loadFlagsSoon(); });
+  document.addEventListener("llminspect:view", (ev) => { if (ev.detail === "scanner") refresh(); });  // directions saved in Tune, knobs in Neurons
+  document.addEventListener("llminspect:monitors", () => { M.across = null; renderAcross(); refresh(); });  // rules added from a knob (ui/neurons.js)
+  document.addEventListener("llminspect:model", () => { M.across = null; renderAcross(); refresh(); });
   refresh();
 }
 boot();

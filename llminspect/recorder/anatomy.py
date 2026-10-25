@@ -235,7 +235,7 @@ class Anatomy:
         try:
             self._load_or_build_edges()
         except Exception as exc:  # edges are an extra; the map works without them
-            print(f"[brainscan] unit edges unavailable: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[llminspect] unit edges unavailable: {type(exc).__name__}: {exc}", flush=True)
         self._prepare_probe()
 
     def _name(self, module: nn.Module) -> str:
@@ -258,7 +258,7 @@ class Anatomy:
             # A cache of a different shape is another model's: never overwrite it (models are filed by name).
             if old and (old.get("down"), old.get("heads")) != (key["down"], key["heads"]):
                 raise RuntimeError(f"Two models share the name {self.s.slug!r}: {self.dir} holds the unit map of "
-                                   f"a different model ({old.get('spec')}). Set BRAINSCAN_MODEL_NAME to tell them apart.")
+                                   f"a different model ({old.get('spec')}). Set LLMINSPECT_MODEL_NAME to tell them apart.")
             if meta.get("key") == key:
                 tensors = load_file(str(tensor_path), device=str(self.s.device))
                 for lm in self.layers:

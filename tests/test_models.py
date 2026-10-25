@@ -15,14 +15,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import catalog
-from brainscan.recorder.model import Subject, display_name
-from brainscan.recorder.session import ModelSwitched, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import catalog
+from llminspect.recorder.model import Subject, display_name
+from llminspect.recorder.session import ModelSwitched, Recorder
+from llminspect.recorder.store import RunStore
 
-TINY = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+TINY = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not TINY.exists(), reason=f"needs the tiny CPU Llama at {TINY}")
 
@@ -104,7 +104,7 @@ def test_weight_estimate_counts_what_the_text_model_loads(tmp_path):
     """Vision towers and multi-token-prediction heads stay on disk; fp32 weights load as bf16."""
     import torch
     from safetensors.torch import save_file
-    from brainscan.recorder.model import weight_bytes
+    from llminspect.recorder.model import weight_bytes
     save_file({"model.language_model.layers.0.w": torch.zeros(100, dtype=torch.float32),  # 400 B, loads as 200
                "model.visual.blocks.0.w": torch.zeros(100, dtype=torch.bfloat16),         # skipped
                "mtp.layers.0.w": torch.zeros(50, dtype=torch.bfloat16),                   # skipped
@@ -121,8 +121,8 @@ def test_display_names():
 
 
 def test_env_name_only_names_the_startup_model(shelf, monkeypatch):
-    monkeypatch.setenv("BRAINSCAN_MODEL", str(shelf["alpha"]))
-    monkeypatch.setenv("BRAINSCAN_MODEL_NAME", "Custom/Alpha")
+    monkeypatch.setenv("LLMINSPECT_MODEL", str(shelf["alpha"]))
+    monkeypatch.setenv("LLMINSPECT_MODEL_NAME", "Custom/Alpha")
     assert Subject(str(shelf["alpha"]), device="cpu").name == "Custom/Alpha"
     assert Subject(str(shelf["beta"]), device="cpu").name == "Org/beta"
 
@@ -159,11 +159,11 @@ def _wait_for_switch():
 
 def test_switch_loads_the_new_model_and_frees_the_old_one(shelf, live):
     client, old_model = live
-    listing = client.get("/brainscan/models").json()
+    listing = client.get("/llminspect/models").json()
     assert listing["current"] == str(shelf["alpha"]) and listing["budget_gb"] is None
     assert any(m["spec"] == str(shelf["beta"]) for m in listing["models"])
 
-    r = client.post("/brainscan/model", json={"spec": str(shelf["beta"])})
+    r = client.post("/llminspect/model", json={"spec": str(shelf["beta"])})
     assert r.status_code == 200 and r.json()["loading"] == str(shelf["beta"])
     _wait_for_switch()
     assert server.state["status"] == "ready", server.state["error"]
@@ -174,14 +174,14 @@ def test_switch_loads_the_new_model_and_frees_the_old_one(shelf, live):
     gc.collect()
     assert old_model() is None, "the old model is still referenced after the switch"
     # The new model serves the Trace tab and the Watch tab's status.
-    assert client.get("/brainscan/anatomy").status_code == 200
-    assert client.get("/brainscan/status").json()["model"]["name"] == "Org/beta"
-    assert client.get("/brainscan/models").json()["current"] == str(shelf["beta"])
+    assert client.get("/llminspect/anatomy").status_code == 200
+    assert client.get("/llminspect/status").json()["model"]["name"] == "Org/beta"
+    assert client.get("/llminspect/models").json()["current"] == str(shelf["beta"])
 
 
 def test_failed_switch_restores_the_previous_model(shelf, live):
     client, _ = live
-    assert client.post("/brainscan/model", json={"spec": str(shelf["broken"])}).status_code == 200
+    assert client.post("/llminspect/model", json={"spec": str(shelf["broken"])}).status_code == 200
     _wait_for_switch()
     assert server.state["status"] == "ready"
     assert server.state["recorder"].s.spec == str(shelf["alpha"])
@@ -192,18 +192,18 @@ def test_failed_switch_restores_the_previous_model(shelf, live):
 def test_switch_refusals(shelf, live, monkeypatch):
     client, _ = live
     monkeypatch.setenv("OLLAMA_MODELS", str(shelf["ollama"]))
-    assert client.post("/brainscan/model", json={"spec": "some-org/not-on-disk"}).status_code == 404
-    assert client.post("/brainscan/model", json={"spec": "ollama:bstest-odd:2b"}).status_code == 400
-    assert client.post("/brainscan/model", json={"spec": str(shelf["no_tok"])}).status_code == 400
-    assert client.post("/brainscan/model", json={"spec": str(shelf["alpha"])}).json()["unchanged"]
+    assert client.post("/llminspect/model", json={"spec": "some-org/not-on-disk"}).status_code == 404
+    assert client.post("/llminspect/model", json={"spec": "ollama:bstest-odd:2b"}).status_code == 400
+    assert client.post("/llminspect/model", json={"spec": str(shelf["no_tok"])}).status_code == 400
+    assert client.post("/llminspect/model", json={"spec": str(shelf["alpha"])}).json()["unchanged"]
     server.state["recorder"].perf["busy"] = True
     try:
-        assert client.post("/brainscan/model", json={"spec": str(shelf["beta"])}).status_code == 409
+        assert client.post("/llminspect/model", json={"spec": str(shelf["beta"])}).status_code == 409
     finally:
         server.state["recorder"].perf["busy"] = False
     assert server._switching.acquire(blocking=False)  # a busy refusal must not leave the lock held
     try:
-        assert client.post("/brainscan/model", json={"spec": str(shelf["beta"])}).status_code == 409
+        assert client.post("/llminspect/model", json={"spec": str(shelf["beta"])}).status_code == 409
     finally:
         server._switching.release()
 
@@ -213,7 +213,7 @@ def test_a_closed_recorder_refuses_queued_work(shelf, tmp_path):
     settings = Settings(model=str(shelf["alpha"]), device="cpu", anatomy=False, graph_decode=False, data_dir=tmp_path)
     rec = Recorder(subject, RunStore(tmp_path, 5), settings, lambda m: None)
     rec.close()
-    from brainscan.recorder.session import GenParams
+    from llminspect.recorder.session import GenParams
     with pytest.raises(ModelSwitched):
         rec.generate(GenParams(messages=[{"role": "user", "content": "hi"}], max_tokens=2))
     assert os.path.isdir(shelf["alpha"])  # the files on disk are never touched

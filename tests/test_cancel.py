@@ -1,4 +1,4 @@
-"""Stopping a generation: Recorder.cancel, POST /brainscan/cancel and client disconnects.
+"""Stopping a generation: Recorder.cancel, POST /llminspect/cancel and client disconnects.
 
 A cancelled request must finish like any other: the tokens generated so far are on the tape, in the
 stored token file, in the activity npz and in the transcript, the KV cache holds exactly what was
@@ -18,14 +18,14 @@ import torch
 import uvicorn
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder.chat import render
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import Cancelled, GenParams, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder.chat import render
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import Cancelled, GenParams, Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 
@@ -201,7 +201,7 @@ def test_cancel_while_waiting_records_nothing(rec_feed):
     assert_idle(rec)
 
 
-# ---- the server: POST /brainscan/cancel and client disconnects ------------------------------
+# ---- the server: POST /llminspect/cancel and client disconnects ------------------------------
 
 @pytest.fixture()
 def client(rec_feed):
@@ -216,29 +216,29 @@ def client(rec_feed):
 
 def test_cancel_endpoint_stops_a_chat_completion(client, rec_feed):
     rec, feed = rec_feed
-    assert client.post("/brainscan/cancel").json()["cancelled"] is False  # nothing is generating
+    assert client.post("/llminspect/cancel").json()["cancelled"] is False  # nothing is generating
     out = {}
     body = {"messages": [{"role": "user", "content": "Write a long story."}], "max_tokens": LONG, "temperature": 0}
 
     def post():
-        out["r"] = client.post("/v1/chat/completions", json=body, headers={"X-Brainscan-Run": "srv-cancel"})
+        out["r"] = client.post("/v1/chat/completions", json=body, headers={"X-LLMInspect-Run": "srv-cancel"})
 
     th = threading.Thread(target=post, daemon=True)
     th.start()
     feed.wait_for_gen("srv-cancel", 3)
-    st = client.get("/brainscan/status").json()
+    st = client.get("/llminspect/status").json()
     assert st["perf"]["busy"] is True and st["generating"]["run"] == "srv-cancel"
-    assert client.post("/brainscan/cancel", json={"run": "another-run"}).json()["cancelled"] is False
-    got = client.post("/brainscan/cancel", json={"run": "srv-cancel"}).json()
+    assert client.post("/llminspect/cancel", json={"run": "another-run"}).json()["cancelled"] is False
+    got = client.post("/llminspect/cancel", json={"run": "srv-cancel"}).json()
     assert got["cancelled"] is True and got["run"] == "srv-cancel" and got["req"] == 1
     th.join(60)
     r = out["r"]
     assert r.status_code == 200
     d = r.json()
-    assert d["choices"][0]["finish_reason"] == "cancelled" and d["brainscan"]["run"] == "srv-cancel"
+    assert d["choices"][0]["finish_reason"] == "cancelled" and d["llminspect"]["run"] == "srv-cancel"
     run = assert_consistent(rec, "srv-cancel")
     assert d["usage"]["completion_tokens"] == sum(x["ph"] == "gen" for x in run.tape) >= 3
-    st = client.get("/brainscan/status").json()
+    st = client.get("/llminspect/status").json()
     assert st["perf"]["busy"] is False and st["generating"] is None
     assert_idle(rec)
 
@@ -300,7 +300,7 @@ def test_a_client_that_hangs_up_stops_its_request(live, rec_feed, stream):
                        "temperature": 0, "stream": stream}).encode()
     with socket.create_connection(("127.0.0.1", live)) as sock:
         sock.sendall(f"POST /v1/chat/completions HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\n"
-                     f"X-Brainscan-Run: {run}\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+                     f"X-LLMInspect-Run: {run}\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
         feed.wait_for_gen(run, 3)
     with feed.cond:  # hung up: the request stops at its next token
         assert feed.cond.wait_for(lambda: feed.done(run), 60), "the request did not stop"

@@ -1,8 +1,8 @@
 """A small starter corpus for the neuron index: short texts across many topics and registers, so a
 neuron's top-activating contexts mean something before a real corpus is plugged in
-(BRAINSCAN_CORPUS). It is deliberately broad rather than large: everyday prose, technical text,
+(LLMINSPECT_CORPUS). It is deliberately broad rather than large: everyday prose, technical text,
 code, dialogue, fiction, emotions, persuasion and rhetoric, an assistant's own voice, and a few
-other languages. Every text was written for Brainscan; none is quoted from elsewhere.
+other languages. Every text was written for LLMInspect; none is quoted from elsewhere.
 """
 
 STARTER: list[tuple[str, str]] = [

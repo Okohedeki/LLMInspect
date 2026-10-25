@@ -4,7 +4,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from brainscan.recorder.edits import EditStack, layer_ranges, parse_layers
+from llminspect.recorder.edits import EditStack, layer_ranges, parse_layers
 
 D = 64
 

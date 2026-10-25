@@ -1,4 +1,4 @@
-// Brainscan workbench: find directions, edit weights, compare original vs edited, export variants.
+// LLMInspect workbench: find directions, edit weights, compare original vs edited, export variants.
 import { defineBar, refreshBar } from "/ui/actionbar.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -45,20 +45,20 @@ const VIEWS = ["actions", "scanner", "weights", "workbench", "neurons"];
 
 function show(view) {
   for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;
-  try { localStorage.setItem("brainscan-view", view); } catch { /* storage unavailable */ }
+  try { localStorage.setItem("llminspect-view", view); } catch { /* storage unavailable */ }
   if (view === "workbench") refresh();
-  document.dispatchEvent(new CustomEvent("brainscan:view", { detail: view }));
+  document.dispatchEvent(new CustomEvent("llminspect:view", { detail: view }));
 }
 
 // ---------------------------------------------------------------- state
 async function refresh() {
-  try { W.status = await api("/brainscan/status"); } catch (err) { message("#wb-edit-msg", err.message, "error"); return; }
+  try { W.status = await api("/llminspect/status"); } catch (err) { message("#wb-edit-msg", err.message, "error"); return; }
   if (W.status.status !== "ready") { message("#wb-edit-msg", `Recorder ${W.status.status}: ${W.status.step || W.status.error || ""}`); return; }
   renderDirections(); renderEdits();
   refreshBar("workbench");
   if (!$("#wb-path").value) {
     const slug = (W.status.model.name || "model").split("/").pop().replace(/[^A-Za-z0-9._-]+/g, "-");
-    $("#wb-path").value = `~/brainscan-exports/${slug}-edited-${new Date().toISOString().slice(0, 10)}`;
+    $("#wb-path").value = `~/llminspect-exports/${slug}-edited-${new Date().toISOString().slice(0, 10)}`;
   }
 }
 
@@ -68,7 +68,7 @@ async function analyze(ev) {
   if (body.positive.length < 2 || body.negative.length < 2) { message("#wb-find-msg", "Each set needs at least two examples.", "error"); return; }
   message("#wb-find-msg", `Reading ${body.positive.length + body.negative.length} examples at every layer…`);
   try {
-    W.sweep = await busy(ev.target, "Analyzing…", () => post("/brainscan/directions/analyze", body));
+    W.sweep = await busy(ev.target, "Analyzing…", () => post("/llminspect/directions/analyze", body));
     W.layer = W.sweep.best;
     $("#wb-save-row").hidden = false;
     $("#wb-layer").max = W.sweep.layers.length - 1;
@@ -114,7 +114,7 @@ async function saveDirection(ev) {
   const layer = Number($("#wb-layer").value);
   if (!name) { message("#wb-find-msg", "Give the direction a name.", "error"); return; }
   try {
-    await busy(ev.target, "Saving…", () => post("/brainscan/directions/save", { id: W.sweep.id, layer, name,
+    await busy(ev.target, "Saving…", () => post("/llminspect/directions/save", { id: W.sweep.id, layer, name,
       description: `Set A vs set B (${W.sweep.n_positive} vs ${W.sweep.n_negative} examples), built in the workbench.` }));
     message("#wb-find-msg", `Saved "${name}" at layer ${layer}. It now shows in Watch and can be used for edits.`, "ok");
     await refresh();
@@ -134,7 +134,7 @@ function renderDirections() {
   $("#wb-dirs").querySelectorAll("[data-del]").forEach((b) => {
     b.onclick = async () => {
       if (!confirm(`Delete direction "${b.dataset.del}"? Its files are removed from the bank.`)) return;
-      try { await api(`/brainscan/directions/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" }); await refresh(); }
+      try { await api(`/llminspect/directions/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" }); await refresh(); }
       catch (err) { message("#wb-find-msg", err.message, "error"); }
     };
   });
@@ -164,7 +164,7 @@ async function addEdit(ev) {
     if (["head", "neuron"].includes(comp)) body.index = Number($("#wb-index").value);
   }
   try {
-    await post("/brainscan/workbench/edits", body);
+    await post("/llminspect/workbench/edits", body);
     message("#wb-edit-msg", "Added. The weights change when you apply the stack.");
     await refresh();
   } catch (err) { message("#wb-edit-msg", err.message, "error"); }
@@ -181,12 +181,12 @@ function renderEdits() {
     `<li class="muted" style="border:none;background:none;padding:0">No edits yet.</li>`;
   $("#wb-list").querySelectorAll("li[data-id]").forEach((li) => {
     li.querySelector("input").onchange = async (ev) => {
-      try { await api(`/brainscan/workbench/edits/${li.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: ev.target.checked }) }); }
+      try { await api(`/llminspect/workbench/edits/${li.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: ev.target.checked }) }); }
       catch (err) { message("#wb-edit-msg", err.message, "error"); }
       await refresh();
     };
     li.querySelector("button").onclick = async () => {
-      try { await api(`/brainscan/workbench/edits/${li.dataset.id}`, { method: "DELETE" }); } catch (err) { message("#wb-edit-msg", err.message, "error"); }
+      try { await api(`/llminspect/workbench/edits/${li.dataset.id}`, { method: "DELETE" }); } catch (err) { message("#wb-edit-msg", err.message, "error"); }
       await refresh();
     };
   });
@@ -200,7 +200,7 @@ function renderEdits() {
 
 async function applyStack(ev) {
   try {
-    const res = await busy(ev.target, "Applying…", () => post("/brainscan/workbench/apply"));
+    const res = await busy(ev.target, "Applying…", () => post("/llminspect/workbench/apply"));
     message("#wb-edit-msg", `Applied ${res.applied.length} edit${res.applied.length === 1 ? "" : "s"} in ${res.seconds} s. ` +
       `Originals of touched weights are kept in memory (${(res.snapshot_bytes / 1e9).toFixed(2)} GB) for exact restore.`, "ok");
   } catch (err) { message("#wb-edit-msg", err.message, "error"); }
@@ -208,7 +208,7 @@ async function applyStack(ev) {
 }
 
 async function revert(ev) {
-  try { await busy(ev.target, "Restoring…", () => post("/brainscan/workbench/revert")); message("#wb-edit-msg", "Original weights restored.", "ok"); }
+  try { await busy(ev.target, "Restoring…", () => post("/llminspect/workbench/revert")); message("#wb-edit-msg", "Original weights restored.", "ok"); }
   catch (err) { message("#wb-edit-msg", err.message, "error"); }
   await refresh();
 }
@@ -219,7 +219,7 @@ async function runCompare(ev) {
   if (!prompts.length) { message("#wb-compare-msg", "Add at least one prompt.", "error"); return; }
   message("#wb-compare-msg", `Generating ${prompts.length * 2} answers and scoring reference text…`);
   try {
-    const res = await busy(ev.target, "Running…", () => post("/brainscan/workbench/compare", { prompts, max_tokens: Number($("#wb-max").value) || 96 }));
+    const res = await busy(ev.target, "Running…", () => post("/llminspect/workbench/compare", { prompts, max_tokens: Number($("#wb-max").value) || 96 }));
     const m = res.metrics;
     $("#wb-metrics").innerHTML = [
       tile("Refusal-phrase rate", `${pct(m.refusal_rate_original)} → ${pct(m.refusal_rate_edited)}`, "substring match on the first 200 characters"),
@@ -240,7 +240,7 @@ async function exportModel(ev) {
   if (!path) { message("#wb-export-msg", "Choose a folder.", "error"); return; }
   message("#wb-export-msg", "Writing the checkpoint…");
   try {
-    const res = await busy(ev.target, "Exporting…", () => post("/brainscan/workbench/export", { path }));
+    const res = await busy(ev.target, "Exporting…", () => post("/llminspect/workbench/export", { path }));
     message("#wb-export-msg", `Saved ${(res.bytes / 1e9).toFixed(2)} GB with ${res.edits} edit${res.edits === 1 ? "" : "s"} recorded to ${res.path}`, "ok");
   } catch (err) { message("#wb-export-msg", err.message, "error"); }
 }
@@ -265,7 +265,7 @@ function setupBar() {
       { id: "edit", group: "Change", label: "Edit weights", hint: "Scale or lesion an attention block, MLP block, head or neuron, or add another edit",
         run: to("#h-edit", "#wb-kind") },
       { id: "forget", group: "Change", label: "Forget a fact", hint: "Guided: name a fact, find the units that carry it, try, measure, keep",
-        run: () => document.dispatchEvent(new CustomEvent("brainscan:action", { detail: { action: "forget" } })) },
+        run: () => document.dispatchEvent(new CustomEvent("llminspect:action", { detail: { action: "forget" } })) },
       { id: "apply", group: "Change", label: "Apply stack", hint: "Apply every checked edit to the weights",
         need: () => (!wb().edits.some((e) => e.enabled) ? "an edit in the stack" : !pending() ? "a change to the stack: it's already applied" : null),
         run: () => $("#wb-apply").click() },
@@ -286,15 +286,15 @@ function setupBar() {
 // ---------------------------------------------------------------- boot
 function boot() {
   setupBar();
-  document.addEventListener("brainscan:show", (ev) => { if (VIEWS.includes(ev.detail)) show(ev.detail); });  // from the guide
+  document.addEventListener("llminspect:show", (ev) => { if (VIEWS.includes(ev.detail)) show(ev.detail); });  // from the guide
   // The stack changed elsewhere (a knockout made permanent in Trace, the Edits panel).
-  document.addEventListener("brainscan:workbench", () => { if (!$("#view-workbench").hidden) refresh(); });
+  document.addEventListener("llminspect:workbench", () => { if (!$("#view-workbench").hidden) refresh(); });
   // The edit panels report the stack from any tab; keep this tab's bar (and Do…) in step with it.
-  document.addEventListener("brainscan:edit-state", (ev) => {
+  document.addEventListener("llminspect:edit-state", (ev) => {
     const w = W.status?.workbench;
     if (!w || w.applied.length !== ev.detail.applied || w.edits.length !== ev.detail.edits) refresh();
   });
-  document.addEventListener("brainscan:model", () => {  // layer sweeps, comparisons and export names belong to one model
+  document.addEventListener("llminspect:model", () => {  // layer sweeps, comparisons and export names belong to one model
     W.sweep = null;
     $("#wb-sweep").innerHTML = ""; $("#wb-save-row").hidden = true; $("#wb-path").value = "";
     $("#wb-metrics").innerHTML = ""; $("#wb-results").innerHTML = "";
@@ -313,7 +313,7 @@ function boot() {
   $("#wb-export").onclick = exportModel;
   syncForm();
   // The forget flow is a step inside a tab's work, never a place to land on reload.
-  const saved = (() => { try { return localStorage.getItem("brainscan-view"); } catch { return null; } })();
+  const saved = (() => { try { return localStorage.getItem("llminspect-view"); } catch { return null; } })();
   show(VIEWS.includes(saved) && saved !== "actions" ? saved : "scanner");
 }
 boot();

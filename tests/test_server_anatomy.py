@@ -7,7 +7,7 @@ edges, recording round-trip). The two seams it does not cover are checked here:
   must record one activity row per non-stop token and flush it to disk (session.py);
 * the FastAPI endpoints in server.py that expose the anatomy to the scanner UI.
 
-Everything runs on CPU with the tiny saved Llama under ~/.cache/brainscan/models/tiny-llama-test
+Everything runs on CPU with the tiny saved Llama under ~/.cache/llminspect/models/tiny-llama-test
 (same shape family as test_anatomy.py's LlamaConfig), so it never touches the GPU, the real
 recorder, or port 8765. The TestClient is created without a `with` block on purpose: Starlette
 only runs the lifespan (which would try to load the configured model) inside the context
@@ -24,13 +24,13 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 CLUSTERS = 8
 
 pytestmark = pytest.mark.skipif(
@@ -46,7 +46,7 @@ def recording(tmp_path_factory):
     8-token generation are all fast on CPU, and every test reuses the same recorder/run.
     """
     torch.manual_seed(0)
-    root = tmp_path_factory.mktemp("brainscan")
+    root = tmp_path_factory.mktemp("llminspect")
     subject = Subject(str(MODEL_DIR), device="cpu")
     settings = Settings(model=str(MODEL_DIR), device="cpu", anatomy=True,
                         anatomy_clusters=CLUSTERS, graph_decode=False, data_dir=root)
@@ -106,7 +106,7 @@ def test_recorder_records_anatomy_end_to_end(recording):
 def test_anatomy_unit_map_endpoint(client, recording):
     rec = recording[0]
     an = rec.anatomy
-    r = client.get("/brainscan/anatomy")
+    r = client.get("/llminspect/anatomy")
     assert r.status_code == 200
     d = r.json()
     assert d["n_units"] == an.n_units
@@ -119,7 +119,7 @@ def test_anatomy_unit_map_endpoint(client, recording):
 
 def test_anatomy_edges_endpoint(client, recording):
     an = recording[0].anatomy
-    r = client.get("/brainscan/anatomy/edges")
+    r = client.get("/llminspect/anatomy/edges")
     assert r.status_code == 200
     e = r.json()
     assert e["available"] is True
@@ -130,20 +130,20 @@ def test_anatomy_edges_endpoint(client, recording):
 
 def test_anatomy_unit_detail_endpoint(client, recording):
     an = recording[0].anatomy
-    r = client.get("/brainscan/anatomy/units/0")
+    r = client.get("/llminspect/anatomy/units/0")
     assert r.status_code == 200
     u = r.json()
     assert u["g"] == 0 and u["kind"] == "head" and u["layer"] == 0
     assert u["matrices"][0]["key"] == "writes"
     assert "spectrum" in u and "effective_rank" in u
     # a unit id past the end is a 404
-    assert client.get(f"/brainscan/anatomy/units/{an.n_units}").status_code == 404
+    assert client.get(f"/llminspect/anatomy/units/{an.n_units}").status_code == 404
 
 
 def test_anatomy_tile_endpoint(client, recording):
     rec = recording[0]
     an = rec.anatomy
-    r = client.post("/brainscan/anatomy/tile", json={"unit": 0, "matrix": "writes"})
+    r = client.post("/llminspect/anatomy/tile", json={"unit": 0, "matrix": "writes"})
     assert r.status_code == 200
     tile = r.json()
     data = np.frombuffer(base64.b64decode(tile["data"]), np.float16)
@@ -155,13 +155,13 @@ def test_anatomy_tile_endpoint(client, recording):
     # the endpoint returns exactly what anatomy.tile produces for the same request
     assert tile["data"] == an.tile({"unit": 0, "matrix": "writes"}, rec.edits.version)["data"]
     # a bad matrix mode is a validation error
-    bad = client.post("/brainscan/anatomy/tile", json={"unit": 0, "matrix": "writes", "mode": "bogus"})
+    bad = client.post("/llminspect/anatomy/tile", json={"unit": 0, "matrix": "writes", "mode": "bogus"})
     assert bad.status_code == 400
 
 
 def test_anatomy_params_endpoint(client, recording):
     rec = recording[0]
-    r = client.get("/brainscan/anatomy/params")
+    r = client.get("/llminspect/anatomy/params")
     assert r.status_code == 200
     params = r.json()
     assert len(params) == len(rec.anatomy.params)
@@ -173,7 +173,7 @@ def test_anatomy_params_endpoint(client, recording):
 def test_run_anatomy_endpoint(client, recording):
     rec, _, res = recording
     an = rec.anatomy
-    r = client.get(f"/brainscan/runs/{res.run_id}/anatomy")
+    r = client.get(f"/llminspect/runs/{res.run_id}/anatomy")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/octet-stream")
     content = r.content
@@ -194,7 +194,7 @@ def test_run_anatomy_endpoint(client, recording):
 def test_lesion_endpoint_adds_scale_edit_for_a_head(client, recording):
     rec = recording[0]
     before = set(rec.edits.edits)
-    r = client.post("/brainscan/anatomy/units/0/lesion", json={})
+    r = client.post("/llminspect/anatomy/units/0/lesion", json={})
     assert r.status_code == 200
     edit = r.json()
     assert edit["kind"] == "scale" and edit["targets"] == ["head"]
@@ -213,7 +213,7 @@ def test_lesion_endpoint_adds_neuron_edit_for_a_cluster(client, recording):
     an = rec.anatomy
     lm0 = an.layers[0]
     g = lm0.offset + lm0.n_heads                                     # layer 0, first MLP cluster
-    r = client.post(f"/brainscan/anatomy/units/{g}/lesion", json={"factor": 0.0})
+    r = client.post(f"/llminspect/anatomy/units/{g}/lesion", json={"factor": 0.0})
     assert r.status_code == 200
     edit = r.json()
     assert edit["kind"] == "scale" and edit["targets"] == ["neuron"]
@@ -226,4 +226,4 @@ def test_lesion_endpoint_adds_neuron_edit_for_a_cluster(client, recording):
     expected = (lm.assign == i).nonzero().flatten().tolist()
     assert sorted(edit["index"]) == sorted(expected)
     # lesioning a non-existent unit is a 404
-    assert client.post(f"/brainscan/anatomy/units/{an.n_units}/lesion", json={}).status_code == 404
+    assert client.post(f"/llminspect/anatomy/units/{an.n_units}/lesion", json={}).status_code == 404

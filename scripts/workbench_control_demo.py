@@ -38,24 +38,24 @@ def call(method, path, body=None):
 
 
 def main() -> None:
-    sweep = call("POST", "/brainscan/directions/analyze",
+    sweep = call("POST", "/llminspect/directions/analyze",
                  {"positive": FRENCH, "negative": ENGLISH, "position": "last", "chat": True})
     best = sweep["best"]
     score = sweep["layers"][best]
     print(f"sweep: best layer {best}, d={score['d']} ± {score.get('d_sd', 0)} over {sweep.get('folds', 1)} folds, "
           f"accuracy {score['acc']:.0%}")
     print("d by layer:", [x["d"] for x in sweep["layers"]])
-    call("POST", "/brainscan/directions/save", {"id": sweep["id"], "layer": best, "name": "language_fr",
+    call("POST", "/llminspect/directions/save", {"id": sweep["id"], "layer": best, "name": "language_fr",
                                                 "description": "French vs English sentences, chat-formatted, last token"})
 
     results = {"sweep": sweep, "conditions": {}}
     settings = {"kind": "orthogonalize", "layers": "all", "targets": ["embed", "attn_out", "mlp_out"], "strength": 1}
     for name, extra in (("language_fr", {"direction": "language_fr"}), ("random", {"direction": "random", "seed": 11})):
-        edit = call("POST", "/brainscan/workbench/edits", {**settings, **extra})
-        applied = call("POST", "/brainscan/workbench/apply")
-        cmp_ = call("POST", "/brainscan/workbench/compare", {"prompts": PROMPTS, "max_tokens": 48})
-        call("POST", "/brainscan/workbench/revert")
-        call("DELETE", f"/brainscan/workbench/edits/{edit['id']}")
+        edit = call("POST", "/llminspect/workbench/edits", {**settings, **extra})
+        applied = call("POST", "/llminspect/workbench/apply")
+        cmp_ = call("POST", "/llminspect/workbench/compare", {"prompts": PROMPTS, "max_tokens": 48})
+        call("POST", "/llminspect/workbench/revert")
+        call("DELETE", f"/llminspect/workbench/edits/{edit['id']}")
         results["conditions"][name] = {"edit": edit, "apply_seconds": applied["seconds"], **cmp_}
         m = cmp_["metrics"]
         print(f"\n== remove {name}: KL/token {m['kl_per_token']:.4f}, perplexity {m['perplexity_original']:.2f} -> "

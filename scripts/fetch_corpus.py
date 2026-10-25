@@ -32,7 +32,7 @@ def get(path: str, params: dict, tries: int = 5) -> dict:
     url = f"{API}/{path}?{urllib.parse.urlencode(params)}"
     for attempt in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "brainscan-fetch-corpus"})
+            req = urllib.request.Request(url, headers={"User-Agent": "llminspect-fetch-corpus"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 return json.load(r)
         except urllib.error.HTTPError as err:
@@ -86,7 +86,7 @@ def fetch(tokens: int, seed: int = 0, max_chars: int = 4000, dataset: str = DATA
 
 def main(argv=None) -> int:
     root = Path(__file__).resolve().parent.parent
-    data = Path(os.environ.get("BRAINSCAN_DATA") or root / "runs").expanduser()
+    data = Path(os.environ.get("LLMINSPECT_DATA") or root / "runs").expanduser()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tokens", type=int, default=400_000, help="about how many tokens to take (default 400000)")
     ap.add_argument("--seed", type=int, default=0, help="which random pages to read")

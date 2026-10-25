@@ -1,4 +1,4 @@
-"""Recorder settings, read from BRAINSCAN_* environment variables."""
+"""Recorder settings, read from LLMINSPECT_* environment variables."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _env(name: str, default: str) -> str:
-    return os.environ.get(f"BRAINSCAN_{name}", default)
+    return os.environ.get(f"LLMINSPECT_{name}", default)
 
 
 @dataclass
@@ -18,7 +18,7 @@ class Settings:
     # "ollama:<tag>" loads a model from the local Ollama store (dequantized from GGUF);
     # anything else is a Hugging Face repo id or local directory.
     model: str = field(default_factory=lambda: _env("MODEL", "ollama:llama3.1:8b"))
-    # Extra folders the model picker searches for checkpoints, besides Brainscan's model cache and
+    # Extra folders the model picker searches for checkpoints, besides LLMInspect's model cache and
     # the Hugging Face hub cache (separated by ":"; e.g. /mnt/h/models). Nothing is downloaded.
     model_dirs: list[Path] = field(default_factory=lambda: [
         Path(p).expanduser() for p in _env("MODEL_DIRS", "").split(os.pathsep) if p.strip()])

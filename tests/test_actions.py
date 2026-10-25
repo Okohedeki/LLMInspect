@@ -12,14 +12,14 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import actions, workbench
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import actions, workbench
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 
@@ -394,17 +394,17 @@ def test_forget_endpoints(rec, clean):
     try:
         client = TestClient(server.app)
         _, _, body = run_fact(rec)
-        r = client.post("/brainscan/actions/forget/target", json=body)
+        r = client.post("/llminspect/actions/forget/target", json=body)
         assert r.status_code == 200
         units = [u["g"] for u in r.json()["rankings"]["direct"]["units"][:2]]
-        r = client.post("/brainscan/actions/forget/try", json=body | {"units": units})
+        r = client.post("/llminspect/actions/forget/try", json=body | {"units": units})
         assert r.status_code == 200 and r.json()["rows"][0]["kind"] == "lead"
-        r = client.post("/brainscan/actions/forget/measure", json=body | {"units": units, "checks": False})
+        r = client.post("/llminspect/actions/forget/measure", json=body | {"units": units, "checks": False})
         assert r.status_code == 200 and r.json()["verdict"]["status"]
-        assert client.post("/brainscan/actions/forget/nope", json=body).status_code == 404
-        assert client.post("/brainscan/actions/forget/target", json={"prompt": ""}).status_code == 400
-        assert client.post("/brainscan/actions/forget/target", json={"run": "nope", "t": 0, "target": 1}).status_code == 404
-        assert client.post("/brainscan/actions/forget/try", json=body | {"units": [10 ** 6]}).status_code == 404
+        assert client.post("/llminspect/actions/forget/nope", json=body).status_code == 404
+        assert client.post("/llminspect/actions/forget/target", json={"prompt": ""}).status_code == 400
+        assert client.post("/llminspect/actions/forget/target", json={"run": "nope", "t": 0, "target": 1}).status_code == 404
+        assert client.post("/llminspect/actions/forget/try", json=body | {"units": [10 ** 6]}).status_code == 404
     finally:
         server.state.clear()
         server.state.update(saved)

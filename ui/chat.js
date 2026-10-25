@@ -4,7 +4,7 @@
 // same run until "New chat"; a run recorded by an agent harness is never appended to.
 //
 // Stop: while the composer's request runs its Send button is a Stop button, and the Trace dock shows
-// a Stop whenever any request is generating (an agent harness's too). Both call /brainscan/cancel: the
+// a Stop whenever any request is generating (an agent harness's too). Both call /llminspect/cancel: the
 // request finishes between two tokens with finish_reason "cancelled" and keeps what it generated.
 
 const CHAT_PREFIX = "chat-";
@@ -14,8 +14,8 @@ const K = {
   generating: null, dockStopping: false, noteTimer: 0,  // any request (live from app.js)
 };
 
-try { Object.assign(K.settings, JSON.parse(localStorage.getItem("brainscan-chat") || "{}")); } catch { /* storage unavailable */ }
-const save = () => { try { localStorage.setItem("brainscan-chat", JSON.stringify(K.settings)); } catch { /* storage unavailable */ } };
+try { Object.assign(K.settings, JSON.parse(localStorage.getItem("llminspect-chat") || "{}")); } catch { /* storage unavailable */ }
+const save = () => { try { localStorage.setItem("llminspect-chat", JSON.stringify(K.settings)); } catch { /* storage unavailable */ } };
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -37,7 +37,7 @@ const newRunId = () => {
  * reply with no text (stopped, or cut off while thinking) stays in as an empty turn, so the recorder
  * lines the next request's messages up with the ones it already recorded. */
 async function history(runId) {
-  const run = await api(`/brainscan/runs/${encodeURIComponent(runId)}`);
+  const run = await api(`/llminspect/runs/${encodeURIComponent(runId)}`);
   return [...(run.messages || [])]
     .sort((a, b) => a.t - b.t || a.i - b.i)
     .filter((m) => ["system", "user", "assistant"].includes(m.role) && ((m.content || "").length || m.generated))
@@ -93,7 +93,7 @@ async function stop() {
   K.stopping = true; sync();
   setStatus("Stopping…");
   try {
-    const got = await api("/brainscan/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run: K.runId }) });
+    const got = await api("/llminspect/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run: K.runId }) });
     if (!got.cancelled && !got.queued) K.ctrl?.abort();  // still on its way to the recorder
   } catch {
     K.ctrl?.abort();  // the server stops a request whose client went away
@@ -105,7 +105,7 @@ async function stopAny() {
   if (K.dockStopping) return;
   K.dockStopping = true; syncDock();
   try {
-    const got = await api("/brainscan/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const got = await api("/llminspect/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     if (!got.cancelled) { K.dockStopping = false; syncDock(); dockNote("Nothing was generating."); }
   } catch (err) {
     K.dockStopping = false; syncDock();
@@ -125,7 +125,7 @@ async function send(root) {
   try {
     const messages = [...(continuing ? await history(runId) : []), { role: "user", content: text }];
     // Open the run in every view as soon as it appears, and follow its tokens live.
-    document.dispatchEvent(new CustomEvent("brainscan:expect-run", { detail: runId }));
+    document.dispatchEvent(new CustomEvent("llminspect:expect-run", { detail: runId }));
     box.value = "";
     for (const r of K.roots) if (r !== root) r.querySelector("textarea").value = "";
     K.fresh = false;
@@ -134,7 +134,7 @@ async function send(root) {
     const kwargs = K.settings.think === "on" ? { enable_thinking: true } : K.settings.think === "off" ? { enable_thinking: false } : undefined;
     const res = await api("/v1/chat/completions", {
       method: "POST", signal: K.ctrl.signal,
-      headers: { "Content-Type": "application/json", "X-Brainscan-Run": runId, "X-Brainscan-Label": "chat" },
+      headers: { "Content-Type": "application/json", "X-LLMInspect-Run": runId, "X-LLMInspect-Label": "chat" },
       body: JSON.stringify({ messages, max_tokens: Number(K.settings.max) || 512, temperature: Number(K.settings.temperature) || 0,
         ...(kwargs ? { chat_template_kwargs: kwargs } : {}) }),
     });
@@ -142,7 +142,7 @@ async function send(root) {
     const finish = res.choices?.[0]?.finish_reason || "stop";
     if (finish !== "cancelled") setStatus(`Done: ${tokens(n)} (${finish}). Click any word to see which units produced it.`, "ok");
     else if (n) setStatus(`Stopped: kept ${tokens(n)}, recorded with the run. Click any word to see which units produced it.`, "ok");
-    else if (res.brainscan?.run) setStatus("Stopped before the model wrote anything; the part of the prompt it read is recorded with the run.", "ok");
+    else if (res.llminspect?.run) setStatus("Stopped before the model wrote anything; the part of the prompt it read is recorded with the run.", "ok");
     else {
       if (!box.value) box.value = text;  // it never reached the model: keep what was typed
       setStatus("Stopped before the model started on it; nothing was recorded.", "ok");
@@ -186,15 +186,15 @@ function mount(root) {
 function boot() {
   document.querySelectorAll("[data-composer]").forEach(mount);
   document.querySelector("#run-select")?.addEventListener("change", sync);
-  document.addEventListener("brainscan:run", sync);
+  document.addEventListener("llminspect:run", sync);
   // Which request is generating comes from the live feed app.js reads.
-  document.addEventListener("brainscan:generating", (ev) => {
+  document.addEventListener("llminspect:generating", (ev) => {
     K.generating = ev.detail;
     if (!ev.detail) K.dockStopping = false;
     if (K.busy && !K.stopping && ev.detail?.run === K.runId) setStatus(GENERATING);  // its turn came
     syncDock();
   });
-  document.addEventListener("brainscan:done", (ev) => {
+  document.addEventListener("llminspect:done", (ev) => {
     const d = ev.detail || {};
     if (d.finish === "cancelled") dockNote(`Stopped · kept ${tokens(d.generated ?? 0)}`);
   });

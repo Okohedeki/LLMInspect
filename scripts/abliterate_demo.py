@@ -60,11 +60,11 @@ def call(path, body=None, method=None):
 
 
 def cleanup():
-    call("/brainscan/workbench/revert", {})
-    for e in call("/brainscan/workbench").get("edits", []):
-        with_ignore(lambda: call(f"/brainscan/workbench/edits/{e['id']}", method="DELETE"))
-    if any(d["name"] == "refusal_demo" for d in call("/brainscan/directions")):
-        with_ignore(lambda: call("/brainscan/directions/refusal_demo", method="DELETE"))
+    call("/llminspect/workbench/revert", {})
+    for e in call("/llminspect/workbench").get("edits", []):
+        with_ignore(lambda: call(f"/llminspect/workbench/edits/{e['id']}", method="DELETE"))
+    if any(d["name"] == "refusal_demo" for d in call("/llminspect/directions")):
+        with_ignore(lambda: call("/llminspect/directions/refusal_demo", method="DELETE"))
 
 
 def with_ignore(fn):
@@ -75,37 +75,37 @@ def with_ignore(fn):
 
 
 def main():
-    st = call("/brainscan/status")
+    st = call("/llminspect/status")
     print(f"model: {st['model']['name']} | status: {st['status']}")
     if st["status"] != "ready":
         raise SystemExit("recorder is not ready")
     cleanup()
 
     print("\n[1] Finding a refusal direction (cross-validated layer sweep)…")
-    sweep = call("/brainscan/directions/analyze",
+    sweep = call("/llminspect/directions/analyze",
                  {"positive": REFUSE, "negative": HARMLESS, "position": "last", "chat": True})
     best = sweep["layers"][sweep["best"]]
     print(f"    best layer {best['layer']}: d={best['d']}"
           + (f" +/- {best['d_sd']} ({sweep['folds']}-fold)" if sweep["held_out"] else " (in-sample)")
           + f", accuracy {best['acc']:.0%}")
-    call("/brainscan/directions/save", {"id": sweep["id"], "layer": best["layer"], "name": "refusal_demo",
+    call("/llminspect/directions/save", {"id": sweep["id"], "layer": best["layer"], "name": "refusal_demo",
                                          "description": "refusal vs harmless (abliterate_demo)"})
 
     print("[2] Stacking the directional-ablation edit + a random control…")
-    call("/brainscan/workbench/edits", {"kind": "orthogonalize", "direction": "refusal_demo", "strength": 1.0,
+    call("/llminspect/workbench/edits", {"kind": "orthogonalize", "direction": "refusal_demo", "strength": 1.0,
                                         "targets": ["embed", "attn_out", "mlp_out"], "layers": "all"})
-    ctrl = call("/brainscan/workbench/edits", {"kind": "orthogonalize", "direction": "random", "strength": 1.0,
+    ctrl = call("/llminspect/workbench/edits", {"kind": "orthogonalize", "direction": "random", "strength": 1.0,
                                                "seed": 7, "targets": ["embed", "attn_out", "mlp_out"], "layers": "all"})
-    call(f"/brainscan/workbench/edits/{ctrl['id']}", {"enabled": False}, method="PATCH")  # measure the refusal edit alone
+    call(f"/llminspect/workbench/edits/{ctrl['id']}", {"enabled": False}, method="PATCH")  # measure the refusal edit alone
 
     print("[3] Applying to the weights…")
     t0 = time.perf_counter()
-    applied = call("/brainscan/workbench/apply", {})
-    edited = call("/brainscan/anatomy/edited")["edited"]
+    applied = call("/llminspect/workbench/apply", {})
+    edited = call("/llminspect/anatomy/edited")["edited"]
     print(f"    applied in {applied.get('seconds')}s; the weight graph marks {len(edited)} edited units")
 
     print("[4] Comparing the original and edited model…")
-    cmp = call("/brainscan/workbench/compare", {"prompts": PROBES, "max_tokens": 64})
+    cmp = call("/llminspect/workbench/compare", {"prompts": PROBES, "max_tokens": 64})
     m = cmp["metrics"]
     print(f"    refusal-phrase rate: {m['refusal_rate_original']:.0%} -> {m['refusal_rate_edited']:.0%}")
     print(f"    KL on neutral text:  {m['kl_per_token']:.4f} nats/token")
@@ -117,7 +117,7 @@ def main():
 
     print("[5] Reverting to the original weights…")
     cleanup()
-    print(f"    edited units now: {len(call('/brainscan/anatomy/edited')['edited'])}")
+    print(f"    edited units now: {len(call('/llminspect/anatomy/edited')['edited'])}")
     print("\nThe edited model was never saved. To keep a variant, use the Workbench Export step.")
 
 

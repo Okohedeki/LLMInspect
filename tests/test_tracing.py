@@ -13,15 +13,15 @@ import torch
 from fastapi.testclient import TestClient
 from transformers import AutoModelForCausalLM
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder.chat import render
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
-from brainscan.recorder.tracing import Busy
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder.chat import render
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
+from llminspect.recorder.tracing import Busy
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 
@@ -248,22 +248,22 @@ def test_trace_endpoints(traced):
     try:
         client = TestClient(server.app)
         t = last_prompt_slot(run, 1)
-        r = client.get(f"/brainscan/runs/{run.id}/tokens/{t}/explain")
+        r = client.get(f"/llminspect/runs/{run.id}/tokens/{t}/explain")
         assert r.status_code == 200 and len(r.json()["contrib"]) == rec.anatomy.n_units
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/{t}/attention", params={"unit": 0}).json()["available"]
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/{t}/attention", params={"unit": 0}).json()["available"]
         cluster = rec.anatomy.layers[0].offset + rec.anatomy.layers[0].n_heads
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/{t}/attention", params={"unit": cluster}).status_code == 400
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/{t}/neurons", params={"unit": cluster}).status_code == 200
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/{t}/explain", params={"weights": "original"}).json()["model_weights"] == "original"
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/{t}/explain", params={"weights": "bogus"}).status_code == 400
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": [0, 1]}).json()["after"]["logit"] is not None
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": "0"}).status_code == 400
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": []}).status_code == 400
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": 0.5}).json()["factor"] == 0.5
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": "x"}).status_code == 400
-        assert client.post(f"/brainscan/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": 40}).status_code == 400
-        assert client.get(f"/brainscan/runs/nope/tokens/{t}/explain").status_code == 404
-        assert client.get(f"/brainscan/runs/{run.id}/tokens/99999/explain").status_code == 404
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/{t}/attention", params={"unit": cluster}).status_code == 400
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/{t}/neurons", params={"unit": cluster}).status_code == 200
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/{t}/explain", params={"weights": "original"}).json()["model_weights"] == "original"
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/{t}/explain", params={"weights": "bogus"}).status_code == 400
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": [0, 1]}).json()["after"]["logit"] is not None
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": "0"}).status_code == 400
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": []}).status_code == 400
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": 0.5}).json()["factor"] == 0.5
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": "x"}).status_code == 400
+        assert client.post(f"/llminspect/runs/{run.id}/tokens/{t}/knockout", json={"units": [0], "factor": 40}).status_code == 400
+        assert client.get(f"/llminspect/runs/nope/tokens/{t}/explain").status_code == 404
+        assert client.get(f"/llminspect/runs/{run.id}/tokens/99999/explain").status_code == 404
     finally:
         server.state.clear()
         server.state.update(saved)

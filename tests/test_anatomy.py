@@ -7,9 +7,9 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, LlamaConfig, Qwen3_5TextConfig
 
-from brainscan.recorder.anatomy import Anatomy, decode, encode, pool, spherical_kmeans
-from brainscan.recorder.edits import EditStack
-from brainscan.recorder.store import RunStore
+from llminspect.recorder.anatomy import Anatomy, decode, encode, pool, spherical_kmeans
+from llminspect.recorder.edits import EditStack
+from llminspect.recorder.store import RunStore
 
 D = 64
 

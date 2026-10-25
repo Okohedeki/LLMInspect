@@ -3,8 +3,8 @@
     scripts/run.sh scripts/make_tiny_model.py [tokenizer_dir] [out_dir]
 
 Then serve it with:
-    BRAINSCAN_MODEL=~/.cache/brainscan/models/tiny-llama-test BRAINSCAN_DEVICE=cpu \
-    BRAINSCAN_DATA=/tmp/brainscan-smoke BRAINSCAN_PORT=8766 scripts/run.sh -m brainscan.server
+    LLMINSPECT_MODEL=~/.cache/llminspect/models/tiny-llama-test LLMINSPECT_DEVICE=cpu \
+    LLMINSPECT_DATA=/tmp/llminspect-smoke LLMINSPECT_PORT=8766 scripts/run.sh -m llminspect.server
 """
 
 import sys
@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from transformers import AutoTokenizer, GenerationConfig, LlamaConfig, LlamaForCausalLM
 
-cache = Path.home() / ".cache" / "brainscan" / "models"
+cache = Path.home() / ".cache" / "llminspect" / "models"
 tok_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else cache / "ollama-llama3.1-8b"
 out = Path(sys.argv[2]) if len(sys.argv) > 2 else cache / "tiny-llama-test"
 

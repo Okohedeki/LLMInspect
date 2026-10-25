@@ -8,14 +8,14 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder.model import Subject
-from brainscan.recorder.monitors import Monitor, MonitorBank, scan, scan_run
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder.model import Subject
+from llminspect.recorder.monitors import Monitor, MonitorBank, scan, scan_run
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 
 def tape(zs, ph="gen", key="probe", control=None):
@@ -94,18 +94,18 @@ def test_live_flags_match_the_scan(tmp_path):
     server.state.update(recorder=rec, status="ready", step="ready", error=None)
     try:
         client = TestClient(server.app)
-        assert client.get("/brainscan/monitors").json()[0]["id"] == m.id
-        assert client.post("/brainscan/monitors", json={"direction": "nope"}).status_code == 400
-        assert client.post("/brainscan/monitors", json={"direction": "tone", "threshold": -1}).status_code == 400
-        row = client.get("/brainscan/runs/watched/flags").json()[0]
+        assert client.get("/llminspect/monitors").json()[0]["id"] == m.id
+        assert client.post("/llminspect/monitors", json={"direction": "nope"}).status_code == 400
+        assert client.post("/llminspect/monitors", json={"direction": "tone", "threshold": -1}).status_code == 400
+        row = client.get("/llminspect/runs/watched/flags").json()[0]
         assert [f["t"] for f in row["flags"]] == [f["t"] for f in flags]
         assert row["control"]["direction"] == "random_control"
-        assert client.get("/brainscan/runs/nope/flags").status_code == 404
-        across = client.get("/brainscan/flags").json()
+        assert client.get("/llminspect/runs/nope/flags").status_code == 404
+        across = client.get("/llminspect/flags").json()
         assert {r["run"]: r["flags"][m.id] for r in across["runs"]}["watched"] == len(flags)
-        assert client.patch(f"/brainscan/monitors/{m.id}", json={"enabled": False}).json()["enabled"] is False
-        assert client.patch("/brainscan/monitors/nope", json={}).status_code == 404
-        assert client.delete(f"/brainscan/monitors/{m.id}").json() == []
+        assert client.patch(f"/llminspect/monitors/{m.id}", json={"enabled": False}).json()["enabled"] is False
+        assert client.patch("/llminspect/monitors/nope", json={}).status_code == 404
+        assert client.delete(f"/llminspect/monitors/{m.id}").json() == []
     finally:
         server.state.clear()
         server.state.update(saved)

@@ -19,13 +19,13 @@ const send = (method, path, body) => api(path, { method, headers: { "Content-Typ
 
 const E = { stack: null, checks: [], results: null, replay: null, busy: null, msg: null, roots: [] };
 const currentRun = () => $("#run-select")?.value || null;
-const chatSettings = () => { try { return JSON.parse(localStorage.getItem("brainscan-chat") || "{}"); } catch { return {}; } };
+const chatSettings = () => { try { return JSON.parse(localStorage.getItem("llminspect-chat") || "{}"); } catch { return {}; } };
 const applied = () => (E.stack?.applied || []).length;
 const appliedIds = () => (E.stack?.applied || []).map((e) => e.id).join();
 
 async function refresh() {
   try {
-    [E.stack, E.checks] = await Promise.all([api("/brainscan/workbench"), api("/brainscan/checks")]);
+    [E.stack, E.checks] = await Promise.all([api("/llminspect/workbench"), api("/llminspect/checks")]);
   } catch (err) { if (err.status !== 503) E.msg = { text: err.message, tone: "error" }; }
   render();
 }
@@ -130,7 +130,7 @@ function render() {
   const btn = $("#gv-edits-btn .count"), n = applied();
   if (btn) { btn.textContent = n ? String(n) : ""; btn.hidden = !n; }
   // checked: the checks were run on the weights as they are now
-  document.dispatchEvent(new CustomEvent("brainscan:edit-state", { detail: { applied: n, edits: (E.stack?.edits || []).length,
+  document.dispatchEvent(new CustomEvent("llminspect:edit-state", { detail: { applied: n, edits: (E.stack?.edits || []).length,
     checks: E.checks.length, checked: !!E.results && E.resultsFor === appliedIds() } }));
 }
 
@@ -139,7 +139,7 @@ async function runChecks() {
   if (!E.checks.length) return;
   E.busy = "Running checks"; render();
   const on = appliedIds();
-  try { E.results = await send("POST", "/brainscan/checks/run"); E.resultsFor = on; } catch (err) { E.msg = { text: err.message, tone: "error" }; }
+  try { E.results = await send("POST", "/llminspect/checks/run"); E.resultsFor = on; } catch (err) { E.msg = { text: err.message, tone: "error" }; }
   E.busy = null; render();
 }
 
@@ -149,45 +149,45 @@ async function replay() {
   E.replay = null;
   await act("Generating both answers", async () => {
     try {
-      E.replay = await send("POST", "/brainscan/workbench/replay", { run, max_tokens: Math.min(Number(cs.max) || 256, 1024), template_kwargs: kwargs });
+      E.replay = await send("POST", "/llminspect/workbench/replay", { run, max_tokens: Math.min(Number(cs.max) || 256, 1024), template_kwargs: kwargs });
     } catch (err) { E.replay = { error: err.status === 409 ? "The model is busy; try again when it finishes." : err.message }; }
   });
 }
 
 function openInTrace(run, word) {
   const sel = $("#run-select");
-  document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "weights" }));
+  document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "weights" }));
   if (sel && sel.value !== run) {
     if (![...sel.options].some((o) => o.value === run)) sel.insertAdjacentHTML("beforeend", `<option value="${esc(run)}">${esc(run)}</option>`);
     sel.value = run;
     sel.dispatchEvent(new Event("change"));
   }
-  if (word != null) document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { word, cmp: true } }));
+  if (word != null) document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { word, cmp: true } }));
 }
 
 function onClick(ev) {
   const t = ev.target;
   const id = t.closest("li[data-id]")?.dataset.id;
-  if (t.matches("[data-apply]")) act("Applying", () => send("POST", "/brainscan/workbench/apply"), runChecks);
-  else if (t.matches("[data-revert]")) act("Restoring", () => send("POST", "/brainscan/workbench/revert"), runChecks);
-  else if (t.matches("[data-remove]") && id) act("Removing", () => send("DELETE", `/brainscan/workbench/edits/${id}`));
+  if (t.matches("[data-apply]")) act("Applying", () => send("POST", "/llminspect/workbench/apply"), runChecks);
+  else if (t.matches("[data-revert]")) act("Restoring", () => send("POST", "/llminspect/workbench/revert"), runChecks);
+  else if (t.matches("[data-remove]") && id) act("Removing", () => send("DELETE", `/llminspect/workbench/edits/${id}`));
   else if (t.matches("[data-replay]")) replay();
   else if (t.matches("[data-trace-diff]") && E.replay?.first_diff) openInTrace(E.replay.edited_run, E.replay.first_diff.t);
   else if (t.matches("[data-open-edited]") && E.replay) openInTrace(E.replay.edited_run, null);
   else if (t.matches("[data-run-checks]")) runChecks();
-  else if (t.matches("[data-remove-check]") && id) act("Removing", () => send("DELETE", `/brainscan/checks/${id}`));
+  else if (t.matches("[data-remove-check]") && id) act("Removing", () => send("DELETE", `/llminspect/checks/${id}`));
 }
 
 function onChange(ev) {
   const id = ev.target.closest("li[data-id]")?.dataset.id;
-  if (ev.target.matches("[data-toggle]") && id) act("Updating", () => send("PATCH", `/brainscan/workbench/edits/${id}`, { enabled: ev.target.checked }));
+  if (ev.target.matches("[data-toggle]") && id) act("Updating", () => send("PATCH", `/llminspect/workbench/edits/${id}`, { enabled: ev.target.checked }));
 }
 
 function onSubmit(ev) {
   if (!ev.target.matches("[data-add-check]")) return;
   ev.preventDefault();
   const f = ev.target, body = { prompt: f.prompt.value, expect: f.expect.value, chat: f.chat.checked };
-  act("Adding the check", () => send("POST", "/brainscan/checks", body), runChecks);
+  act("Adding the check", () => send("POST", "/llminspect/checks", body), runChecks);
 }
 
 function boot() {
@@ -199,11 +199,11 @@ function boot() {
     root.addEventListener("keydown", (ev) => ev.stopPropagation());  // typing a check never drives the graph
   }
   // The stack or the checks changed elsewhere (the weights view relays the live "workbench" message).
-  document.addEventListener("brainscan:workbench", refresh);
-  document.addEventListener("brainscan:checks", async (ev) => { await refresh(); if (ev.detail?.run) runChecks(); });
-  document.addEventListener("brainscan:model", () => { E.results = null; E.replay = null; refresh(); });
+  document.addEventListener("llminspect:workbench", refresh);
+  document.addEventListener("llminspect:checks", async (ev) => { await refresh(); if (ev.detail?.run) runChecks(); });
+  document.addEventListener("llminspect:model", () => { E.results = null; E.replay = null; refresh(); });
   document.querySelector("#run-select")?.addEventListener("change", render);
-  document.addEventListener("brainscan:run", render);
+  document.addEventListener("llminspect:run", render);
   refresh();
 }
 boot();

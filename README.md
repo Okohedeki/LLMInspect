@@ -1,9 +1,9 @@
-# Brainscan
+# LLMInspect
 
 A platform for tracing, steering and tuning open-weights language models.
 
-Brainscan runs a model behind an OpenAI-compatible endpoint, so any chat client or agent harness can
-use it as a drop-in model. While the model works, Brainscan records what happens inside it on every
+LLMInspect runs a model behind an OpenAI-compatible endpoint, so any chat client or agent harness can
+use it as a drop-in model. While the model works, LLMInspect records what happens inside it on every
 token. You can then see why it wrote what it wrote, steer it while it runs, and edit its weights
 and measure what changed.
 
@@ -50,7 +50,7 @@ run it.
 
 ## Run it
 
-Brainscan runs inside WSL2 with an NVIDIA GPU. CPU mode works for testing.
+LLMInspect runs inside WSL2 with an NVIDIA GPU. CPU mode works for testing.
 
 One-time setup:
 
@@ -61,14 +61,14 @@ wsl -e bash scripts/setup_wsl.sh
 Start the recorder:
 
 ```bash
-wsl -e bash scripts/run.sh -m brainscan.server
+wsl -e bash scripts/run.sh -m llminspect.server
 ```
 
 Open `http://localhost:8765/`, then chat with the model from the UI. Or point any agent harness at
 `http://localhost:8765/v1`, for example the bundled mini agent:
 
 ```bash
-wsl -e bash scripts/run.sh -m brainscan.harness.mini_agent --task fix_fizzbuzz
+wsl -e bash scripts/run.sh -m llminspect.harness.mini_agent --task fix_fizzbuzz
 ```
 
 Run the tests:
@@ -79,20 +79,20 @@ wsl -e bash scripts/run.sh -m pytest -q
 
 ### Settings
 
-Copy `brainscan.env.example` to `brainscan.env` (git-ignored) for machine-specific defaults.
+Copy `llminspect.env.example` to `llminspect.env` (git-ignored) for machine-specific defaults.
 Variables already set in the environment win.
 
 | Variable | Meaning |
 |---|---|
-| `BRAINSCAN_MODEL` | The model to load: a Hugging Face repo id, a local checkpoint folder, a `.gguf` file, or `ollama:<tag>` |
-| `BRAINSCAN_MODEL_NAME` | The display name. Brainscan files maps, directions and knobs under it, so each model needs its own name |
-| `BRAINSCAN_GPU_FRACTION` | The share of GPU memory Brainscan may use, e.g. `0.25` |
-| `BRAINSCAN_DEVICE` | `cuda` (the default) or `cpu` |
-| `BRAINSCAN_DATA` | Where recordings and per-model files go (default `./runs`) |
-| `BRAINSCAN_CORPUS` | Your own text for the neuron index (a file or folder) |
-| `BRAINSCAN_PORT` | Server port (default `8765`) |
+| `LLMINSPECT_MODEL` | The model to load: a Hugging Face repo id, a local checkpoint folder, a `.gguf` file, or `ollama:<tag>` |
+| `LLMINSPECT_MODEL_NAME` | The display name. LLMInspect files maps, directions and knobs under it, so each model needs its own name |
+| `LLMINSPECT_GPU_FRACTION` | The share of GPU memory LLMInspect may use, e.g. `0.25` |
+| `LLMINSPECT_DEVICE` | `cuda` (the default) or `cpu` |
+| `LLMINSPECT_DATA` | Where recordings and per-model files go (default `./runs`) |
+| `LLMINSPECT_CORPUS` | Your own text for the neuron index (a file or folder) |
+| `LLMINSPECT_PORT` | Server port (default `8765`) |
 
-Brainscan never downloads a model. Put checkpoints in `~/.cache/brainscan/models` or the Hugging
+LLMInspect never downloads a model. Put checkpoints in `~/.cache/llminspect/models` or the Hugging
 Face cache, and they appear in the model picker.
 
 ## Limits
@@ -105,14 +105,14 @@ Face cache, and they appear in the model picker.
 - Weight edits are approximate on architectures with a norm after each block's output, such as
   Gemma. Mixture-of-experts layers can't be edited yet.
 - On Windows/WSL, a full GPU slows down instead of failing, so leave headroom or set
-  `BRAINSCAN_GPU_FRACTION`.
+  `LLMINSPECT_GPU_FRACTION`.
 
 ## Layout
 
 ```
-brainscan/recorder/   model loading, recording, tracing, directions, neurons, weight edits, monitors
-brainscan/server.py   the /v1 endpoint, the /brainscan API, the live feed and the UI
-brainscan/harness/    a mini coding agent and its tasks
+llminspect/recorder/   model loading, recording, tracing, directions, neurons, weight edits, monitors
+llminspect/server.py   the /v1 endpoint, the /llminspect API, the live feed and the UI
+llminspect/harness/    a mini coding agent and its tasks
 ui/                   the web UI: plain HTML, CSS and JavaScript, no build step
 scripts/              setup, launch, demo recording and corpus tools
 tests/                unit tests (pytest)

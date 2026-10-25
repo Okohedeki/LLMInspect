@@ -1,6 +1,6 @@
 // "Forget this fact": a guided knockout made permanent, as a five-step flow (Goal, Target, Try,
-// Measure, Keep) on /brainscan/actions/forget/* (see brainscan/recorder/actions.py). It opens from
-// the action bars (Trace hands over the traced word through brainscan:action; Tune and Do… open it
+// Measure, Keep) on /llminspect/actions/forget/* (see llminspect/recorder/actions.py). It opens from
+// the action bars (Trace hands over the traced word through llminspect:action; Tune and Do… open it
 // with a typed fact), and its back link returns to the tab it was opened from.
 
 const $ = (sel) => document.querySelector(sel);
@@ -70,7 +70,7 @@ function close() { go(from); }
 function openForget(source = null) {
   if (current !== "actions") from = current;
   reset(source && { ...source, lead: cleanText(source.lead) });
-  document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "actions" }));
+  document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "actions" }));
   render();
   if (F.source && !F.questions) prefillQuestion(F.source);
 }
@@ -78,7 +78,7 @@ function openForget(source = null) {
 /** A word from a chat: ask the chat's own question again as one of the tests. */
 async function prefillQuestion(src) {
   try {
-    const run = await api("GET", `/brainscan/runs/${encodeURIComponent(src.run)}`);
+    const run = await api("GET", `/llminspect/runs/${encodeURIComponent(src.run)}`);
     const asked = (run.messages || []).filter((m) => m.role === "user" && m.t <= src.t && (m.content || "").trim())
       .sort((a, b) => a.t - b.t).pop();
     if (asked && F.source === src && !F.questions) {
@@ -88,7 +88,7 @@ async function prefillQuestion(src) {
   } catch { /* the question stays empty */ }
 }
 function go(view, then) {
-  document.dispatchEvent(new CustomEvent("brainscan:show", { detail: view }));
+  document.dispatchEvent(new CustomEvent("llminspect:show", { detail: view }));
   if (then) requestAnimationFrame(() => setTimeout(then, 60));
 }
 const scrollTo = (sel) => () => $(sel)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -101,7 +101,7 @@ function openRunInTrace(run, word) {
     sel.value = run;
     sel.dispatchEvent(new Event("change"));
   }
-  if (word != null) document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { word } }));
+  if (word != null) document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { word } }));
 }
 
 // ---------------------------------------------------------------- the flow
@@ -407,7 +407,7 @@ function find() {
     F.msg = { text: "Write the lead-in and the answer the model gives after it.", tone: "error" }; render(); return;
   }
   work("Finding the units behind the answer", async () => {
-    F.target = await api("POST", "/brainscan/actions/forget/target", factBody());
+    F.target = await api("POST", "/llminspect/actions/forget/target", factBody());
     F.ranking = F.target.ranking; F.k = ranking().suggested || 1; F.tried = null; F.measured = null; F.kept = null;
     F.step = "target";
   });
@@ -416,14 +416,14 @@ function find() {
 function runTry() {
   const k = F.k, p = pick();
   return work(`Answering with and without ${plural(k, "unit")}`, async () => {
-    F.tried = { ...(await api("POST", "/brainscan/actions/forget/try", { ...factBody(), units: units() })), k, pick: p };
+    F.tried = { ...(await api("POST", "/llminspect/actions/forget/try", { ...factBody(), units: units() })), k, pick: p };
   });
 }
 
 function runMeasure() {
   const k = F.k, p = pick();
   return work("Measuring: the fact, random units, facts to keep, neutral text", async () => {
-    F.measured = { ...(await api("POST", "/brainscan/actions/forget/measure", { ...factBody(), units: units() })), k, pick: p };
+    F.measured = { ...(await api("POST", "/llminspect/actions/forget/measure", { ...factBody(), units: units() })), k, pick: p };
   });
 }
 
@@ -431,38 +431,38 @@ function keep() {
   const saveKeep = $("#fl-save-keep")?.checked, saveFact = $("#fl-save-fact")?.checked;
   const f = F.target.fact;
   work("Removing the units from the weights", async () => {
-    await api("POST", "/brainscan/anatomy/lesion", { units: units(), apply: true, note: `forget “${f.answer}” after “${f.lead.slice(-40)}”` });
+    await api("POST", "/llminspect/anatomy/lesion", { units: units(), apply: true, note: `forget “${f.answer}” after “${f.lead.slice(-40)}”` });
     let saved = 0;
-    if (saveKeep) for (const c of parseKeep(F.keep)) { await api("POST", "/brainscan/checks", { ...c, chat: false }); saved++; }
+    if (saveKeep) for (const c of parseKeep(F.keep)) { await api("POST", "/llminspect/checks", { ...c, chat: false }); saved++; }
     if (saveFact) {
-      await api("POST", "/brainscan/checks", F.source ? { run: F.source.run, t: F.source.t, target: F.source.target } : { prompt: F.prompt, expect: F.answer });
+      await api("POST", "/llminspect/checks", F.source ? { run: F.source.run, t: F.source.t, target: F.source.target } : { prompt: F.prompt, expect: F.answer });
       saved++;
     }
     F.kept = { checks: saved };
-    document.dispatchEvent(new CustomEvent("brainscan:workbench"));
-    document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } }));
+    document.dispatchEvent(new CustomEvent("llminspect:workbench"));
+    document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } }));
   });
 }
 
 function revert() {
   work("Restoring the original weights", async () => {
-    await api("POST", "/brainscan/workbench/revert", {});
-    document.dispatchEvent(new CustomEvent("brainscan:workbench"));
+    await api("POST", "/llminspect/workbench/revert", {});
+    document.dispatchEvent(new CustomEvent("llminspect:workbench"));
     F.msg = { text: "Original weights restored.", tone: "ok" };
   });
 }
 
 // ---------------------------------------------------------------- boot
 function boot() {
-  document.addEventListener("brainscan:view", (ev) => { current = ev.detail; });
+  document.addEventListener("llminspect:view", (ev) => { current = ev.detail; });
   $("#fl-back").onclick = () => { if (!F.busy) close(); };
   // From an action bar or Do…: a traced word from Trace, or nothing (type a fact).
-  document.addEventListener("brainscan:action", (ev) => {
+  document.addEventListener("llminspect:action", (ev) => {
     const d = ev.detail || {};
     if (d.action !== "forget") return;
     openForget(d.run ? { run: d.run, t: d.t, target: d.target, of: d.of, word: d.word, lead: d.lead, question: d.question } : null);
   });
   // Units belong to one model: a switch starts over.
-  document.addEventListener("brainscan:model", () => { if (current === "actions" && !F.busy) { reset(); close(); } });
+  document.addEventListener("llminspect:model", () => { if (current === "actions" && !F.busy) { reset(); close(); } });
 }
 boot();

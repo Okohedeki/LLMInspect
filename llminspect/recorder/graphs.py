@@ -106,7 +106,7 @@ class DecodeGraphs:
     def _turn_off(self, reason: str) -> None:
         self._release()
         self.off = reason
-        print(f"[brainscan] decode graphs off, decoding eagerly: {reason}", flush=True)
+        print(f"[llminspect] decode graphs off, decoding eagerly: {reason}", flush=True)
 
     def _release(self) -> None:
         self.graphs, self.calls, self.logits, self.resid, self.key = [], [], None, [], None
@@ -252,9 +252,9 @@ class DecodeGraphs:
         if diff is not None:
             self._release()
             self.rejected.add(key)
-            print(f"[brainscan] decode graphs differ from eager decoding ({diff}); decoding eagerly", flush=True)
+            print(f"[llminspect] decode graphs differ from eager decoding ({diff}); decoding eagerly", flush=True)
             return False
-        print(f"[brainscan] decode graphs captured in {self.capture_s:.2f} s: {len(graphs)} graphs around "
+        print(f"[llminspect] decode graphs captured in {self.capture_s:.2f} s: {len(graphs)} graphs around "
               f"{len(calls)} eager attention calls, bit-identical to eager decoding", flush=True)
         return True
 

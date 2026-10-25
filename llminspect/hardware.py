@@ -1,6 +1,6 @@
 """Phase 0 hardware report: what this machine can record, and what recordings cost on disk.
 
-    scripts/run.sh -m brainscan.hardware
+    scripts/run.sh -m llminspect.hardware
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def bytes_per_token(n_layers: int, d_model: int) -> dict:
 def report() -> str:
     settings = Settings()
     vm = psutil.virtual_memory()
-    lines = ["Brainscan hardware report", "=" * 25,
+    lines = ["LLMInspect hardware report", "=" * 25,
              f"Host: {platform.system()} {platform.release()} | CPU cores: {psutil.cpu_count(logical=False)} "
              f"physical / {psutil.cpu_count()} logical | RAM: {vm.total / GB:.0f} GB ({vm.available / GB:.0f} GB free)"]
     gs = gpus()

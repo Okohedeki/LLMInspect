@@ -11,14 +11,14 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from brainscan import server
-from brainscan.config import Settings
-from brainscan.recorder import workbench
-from brainscan.recorder.model import Subject
-from brainscan.recorder.session import GenParams, Recorder
-from brainscan.recorder.store import RunStore
+from llminspect import server
+from llminspect.config import Settings
+from llminspect.recorder import workbench
+from llminspect.recorder.model import Subject
+from llminspect.recorder.session import GenParams, Recorder
+from llminspect.recorder.store import RunStore
 
-MODEL_DIR = Path.home() / ".cache" / "brainscan" / "models" / "tiny-llama-test"
+MODEL_DIR = Path.home() / ".cache" / "llminspect" / "models" / "tiny-llama-test"
 
 pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason=f"needs the tiny CPU Llama at {MODEL_DIR}")
 
@@ -159,23 +159,23 @@ def test_tune_endpoints(tuned, clean):
         t = last_prompt_slot(run)
         ex = rec.tracer.explain(run.id, t)
         units = top_units(rec, ex, "head", 2)
-        r = client.post("/brainscan/anatomy/lesion", json={"units": units, "apply": True, "note": "test"})
+        r = client.post("/llminspect/anatomy/lesion", json={"units": units, "apply": True, "note": "test"})
         assert r.status_code == 200
         body = r.json()
         assert body["edit"]["kind"] == "units" and [u["g"] for u in body["edit"]["units"]] == sorted(units)
         assert body["workbench"]["applied"] and rec.edits.applied
-        assert client.post("/brainscan/anatomy/lesion", json={"units": []}).status_code == 400
-        assert client.post("/brainscan/anatomy/lesion", json={"units": [10 ** 6]}).status_code == 404
-        r = client.post("/brainscan/workbench/replay", json={"run": run.id, "max_tokens": 4})
+        assert client.post("/llminspect/anatomy/lesion", json={"units": []}).status_code == 400
+        assert client.post("/llminspect/anatomy/lesion", json={"units": [10 ** 6]}).status_code == 404
+        r = client.post("/llminspect/workbench/replay", json={"run": run.id, "max_tokens": 4})
         assert r.status_code == 200 and r.json()["edited_run"]
-        assert client.post("/brainscan/workbench/replay", json={"run": "nope"}).status_code == 404
-        c = client.post("/brainscan/checks", json={"prompt": "Roses are", "expect": "red"}).json()
-        assert client.get("/brainscan/checks").json()[-1]["id"] == c["id"]
-        res = client.post("/brainscan/checks/run").json()
+        assert client.post("/llminspect/workbench/replay", json={"run": "nope"}).status_code == 404
+        c = client.post("/llminspect/checks", json={"prompt": "Roses are", "expect": "red"}).json()
+        assert client.get("/llminspect/checks").json()[-1]["id"] == c["id"]
+        res = client.post("/llminspect/checks/run").json()
         assert res["edited"] and any(x["id"] == c["id"] and x["original"] for x in res["checks"])
-        assert client.post("/brainscan/checks", json={"prompt": ""}).status_code == 400
-        assert client.delete(f"/brainscan/checks/{c['id']}").status_code == 200
-        assert client.delete("/brainscan/checks/nope").status_code == 404
+        assert client.post("/llminspect/checks", json={"prompt": ""}).status_code == 400
+        assert client.delete(f"/llminspect/checks/{c['id']}").status_code == 200
+        assert client.delete("/llminspect/checks/nope").status_code == 404
     finally:
         server.state.clear()
         server.state.update(saved)

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Brainscan</title>
+  <title>LLMInspect</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -18,7 +18,7 @@
         <path d="M8 21 L14 11 L19 18 L24 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
         <circle cx="8" cy="21" r="2.3" fill="#fff"/><circle cx="14" cy="11" r="2.3" fill="#fff"/><circle cx="19" cy="18" r="2.3" fill="#fff"/><circle cx="24" cy="9" r="2.3" fill="#fff"/>
       </svg>
-      <span class="wordmark">Brainscan</span>
+      <span class="wordmark">LLMInspect</span>
       <span class="live-dot" id="live-dot" title="Live feed"></span>
     </div>
     <nav class="verbs" id="verbs" aria-label="Action: what to do to the model"></nav>
@@ -34,7 +34,7 @@
       <span class="stat" id="stat-disk" title="Recording storage used / budget">Disk –</span>
     </div>
     <button type="button" class="do-btn" id="do-btn" title="Search every action and every tool and run it (⌘K or Ctrl+K)">Do… <kbd>⌘K</kbd></button>
-    <button class="icon-btn help" id="help-btn" aria-label="Guide: everything Brainscan can do" title="Guide (?)">?</button>
+    <button class="icon-btn help" id="help-btn" aria-label="Guide: everything LLMInspect can do" title="Guide (?)">?</button>
     <button class="icon-btn" id="theme-toggle" aria-label="Switch light or dark theme" title="Theme">
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.5v10a5 5 0 0 1 0-10z" fill="currentColor"/></svg>
     </button>
@@ -306,7 +306,7 @@
         <h2 id="h-find">1 · Find a direction</h2>
         <button type="button" class="link" id="wb-example">Load example (French vs English)</button>
       </div>
-      <p class="hint">Give two sets of examples, one per line. Brainscan reads the residual stream for each, takes the
+      <p class="hint">Give two sets of examples, one per line. LLMInspect reads the residual stream for each, takes the
         difference of the set means at every layer, and scores how well that direction separates held-out examples.
         Directions are always measured on the original weights.</p>
       <div class="two">
@@ -406,7 +406,7 @@
 
     <section class="panel wb-export" aria-labelledby="h-export">
       <div class="panel-head"><h2 id="h-export">5 · Export the variant</h2></div>
-      <p class="hint">Saves the edited weights as a Hugging Face checkpoint, with brainscan_edits.json recording every
+      <p class="hint">Saves the edited weights as a Hugging Face checkpoint, with llminspect_edits.json recording every
         edit and the base model. Paths are inside WSL; /mnt/h/... writes to the H: drive.</p>
       <div class="row">
         <input id="wb-path" type="text" spellcheck="false" aria-label="Export folder">
@@ -511,7 +511,7 @@
   </div>
 
   <footer class="notice">
-    Brainscan shows functional measurements: logit-lens probabilities, direct logit attribution and projections
+    LLMInspect shows functional measurements: logit-lens probabilities, direct logit attribution and projections
     onto contrast vectors built from example texts. Each readout is labelled by how it was built. Nothing here
     measures experience.
   </footer>

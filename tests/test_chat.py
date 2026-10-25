@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from brainscan.recorder.chat import (common_prefix, one_call_per_turn, parse_tool_calls, render, split_reasoning,
+from llminspect.recorder.chat import (common_prefix, one_call_per_turn, parse_tool_calls, render, split_reasoning,
                                      to_template_messages)
-from brainscan.recorder.events import message_events, scan_tool_output
+from llminspect.recorder.events import message_events, scan_tool_output
 
 
 def test_llama_json_tool_call():
@@ -80,7 +80,7 @@ def test_tool_output_events():
     assert [e for e, _ in message_events({"role": "tool", "name": "run_tests", "content": "4 passed"})] == ["tool_result", "test_result"]
 
 
-TOKENIZER = Path.home() / ".cache" / "brainscan" / "models" / "ollama-llama3.1-8b"
+TOKENIZER = Path.home() / ".cache" / "llminspect" / "models" / "ollama-llama3.1-8b"
 
 
 @pytest.mark.skipif(not (TOKENIZER / "tokenizer.json").exists(), reason="converted Llama tokenizer not present")

@@ -1,4 +1,4 @@
-// Brainscan weights: the model as a live, zoomable graph. Nodes are units (attention heads and MLP
+// LLMInspect weights: the model as a live, zoomable graph. Nodes are units (attention heads and MLP
 // neuron clusters) laid out along the residual stream; they glow by how much they wrote into the
 // stream at the current token, and edges join units whose weights compose. A dock below follows the
 // run token by token; clicking a node opens its weights, what it writes, and when it was most active.
@@ -117,7 +117,7 @@ async function loadAtlas() {
   if (A._loadingAtlas) return A._loadingAtlas;  // single-flight: a retry + a status frame must not double-load
   A._loadingAtlas = (async () => {
    try {
-    const atlas = await api("/brainscan/anatomy");
+    const atlas = await api("/llminspect/anatomy");
     A.atlas = atlas; A.U = atlas.n_units; A.layers = atlas.layers; A.units = atlas.units;
     ENC.lo = atlas.encoding.lo; ENC.steps = atlas.encoding.steps;
     A.kind = new Uint8Array(A.U); A.layerOf = new Uint16Array(A.U); A.idxOf = new Uint16Array(A.U);
@@ -134,7 +134,7 @@ async function loadAtlas() {
     graph.setAtlas(atlas);
     pushState();
     renderLegend();
-    api("/brainscan/anatomy/edges").then((e) => {
+    api("/llminspect/anatomy/edges").then((e) => {
       if (e.available) { e.up = Int32Array.from(e.up); e.down = Int32Array.from(e.down); e.up_x = Float32Array.from(e.up_x); e.down_x = Float32Array.from(e.down_x); }
       A.edges = e; graph.setEdges(e); renderLegend();
       if (A.pathsOpen) runPathSearch(true);
@@ -152,7 +152,7 @@ async function loadAtlas() {
 }
 
 async function refreshEdited() {
-  try { A.edited = new Set((await api("/brainscan/anatomy/edited")).edited); } catch { /* recorder busy */ }
+  try { A.edited = new Set((await api("/llminspect/anatomy/edited")).edited); } catch { /* recorder busy */ }
   resetThumbs();
   pushState();
 }
@@ -243,9 +243,9 @@ async function openRun(id) {
   if (!id) { A.loading = null; renderConvo(true); setCursor(null); return; }
   try {
     const [run, tape, bin] = await Promise.all([
-      api(`/brainscan/runs/${encodeURIComponent(id)}`),
-      api(`/brainscan/runs/${encodeURIComponent(id)}/tape`),
-      fetch(`/brainscan/runs/${encodeURIComponent(id)}/anatomy`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+      api(`/llminspect/runs/${encodeURIComponent(id)}`),
+      api(`/llminspect/runs/${encodeURIComponent(id)}/tape`),
+      fetch(`/llminspect/runs/${encodeURIComponent(id)}/anatomy`).then((r) => (r.ok ? r.arrayBuffer() : null)),
     ]);
     if (A.runId !== id) return;
     A.meta = run.meta; A.events = run.events || [];
@@ -309,7 +309,7 @@ function handle(msg) {
       refreshEdited();
       if (A.selected != null && A.visible) selectUnit(A.selected, true);  // the weights changed
       if (A.mode === "attr" && A.visible) loadExplain();  // hidden: activate() re-traces on return
-      document.dispatchEvent(new CustomEvent("brainscan:workbench"));  // the edit panels (ui/edits.js) refresh
+      document.dispatchEvent(new CustomEvent("llminspect:workbench"));  // the edit panels (ui/edits.js) refresh
       break;
     case "status":
       if (!A.atlas && A.visible) activate();
@@ -318,7 +318,7 @@ function handle(msg) {
 }
 
 function connect() {
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/brainscan/live`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/llminspect/live`);
   ws.onclose = () => setTimeout(connect, 1500);
   ws.onmessage = (ev) => { try { for (const msg of JSON.parse(ev.data)) handle(msg); } catch (err) { console.warn("weights: bad live frame", err); } };
 }
@@ -582,7 +582,7 @@ function scheduleTokenWork() {
   }, 260);
 }
 
-const tokenUrl = (t) => `/brainscan/runs/${encodeURIComponent(A.runId)}/tokens/${t}`;
+const tokenUrl = (t) => `/llminspect/runs/${encodeURIComponent(A.runId)}/tokens/${t}`;
 function fetchExplain(t, target, weights) {
   const q = new URLSearchParams();
   if (target != null) q.set("target", target);
@@ -989,7 +989,7 @@ function setConvo(open) {
   CV.open = open;
   $("#view-weights").classList.toggle("convo-hidden", !open);
   $("#gv-convo-btn").setAttribute("aria-pressed", String(open));
-  try { localStorage.setItem("brainscan-convo", open ? "1" : "0"); } catch { /* storage unavailable */ }
+  try { localStorage.setItem("llminspect-convo", open ? "1" : "0"); } catch { /* storage unavailable */ }
   schedule();
   if (open) markConvo(true);
 }
@@ -1204,11 +1204,11 @@ async function makePermanent(k) {
   k.permanent = "pending"; k.permError = null;
   renderKnockouts();
   try {
-    await post("/brainscan/anatomy/lesion", { units: k.units, factor: k.factor || 0, apply: true,
+    await post("/llminspect/anatomy/lesion", { units: k.units, factor: k.factor || 0, apply: true,
       note: `${k.factor ? `scale test ×${k.factor}` : "knockout"} for ${visTok(k.res.target.text)}` });
     k.permanent = "done";
     A.cmp = true;  // the trace now shows what the edit changed on this token
-    document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } }));
+    document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } }));
     setEditsPanel(true);
   } catch (err) {
     k.permanent = null; k.permError = err.message;
@@ -1266,7 +1266,7 @@ function setEditsPanel(open) {
   A.editsOpen = open;
   $("#gv-edits").hidden = !open;
   $("#gv-edits-btn").setAttribute("aria-pressed", String(open));
-  if (open) document.dispatchEvent(new CustomEvent("brainscan:workbench"));
+  if (open) document.dispatchEvent(new CustomEvent("llminspect:workbench"));
   pushState();
 }
 
@@ -1274,7 +1274,7 @@ function setEditsPanel(open) {
 function forgetFromToken(info) {
   const i = A.view.indexOf(info.t);
   const lead = i < 0 ? "" : A.view.slice(Math.max(0, i - 14), i + 1).map((t) => A.tok[t]?.tx ?? "").join("");
-  document.dispatchEvent(new CustomEvent("brainscan:action", { detail: {
+  document.dispatchEvent(new CustomEvent("llminspect:action", { detail: {
     action: "forget", run: A.runId, t: info.t, target: info.target.id, of: A.attrOf ?? nextSlot(info.t),
     word: info.target.text, lead } }));
 }
@@ -1284,10 +1284,10 @@ async function addCheckFromToken() {
   if (!info?.target || !A.runId) return;
   if (btn) btn.disabled = true;
   try {
-    await post("/brainscan/checks", { run: A.runId, t: info.t, target: info.target.id });
+    await post("/llminspect/checks", { run: A.runId, t: info.t, target: info.target.id });
     if (btn) btn.textContent = "Saved as a check ✓";
     noteBar("weights", `Saved “${visTok(info.target.text)}” as a behavior check`);
-    document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } }));
+    document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } }));
   } catch (err) {
     if (btn) { btn.textContent = "Couldn't save"; btn.title = err.message; btn.disabled = false; }
     noteBar("weights", `Couldn't save the check: ${err.message}`);
@@ -1309,19 +1309,19 @@ const lastKnockout = () => (A.koKey === `${A.runId}|${A.cursor}|${A.attrTarget ?
 async function lesionSelection() {
   const units = [...A.sel];
   try {
-    await post("/brainscan/anatomy/lesion", { units, apply: true, note: `lesion of ${units.length} selected units` });
+    await post("/llminspect/anatomy/lesion", { units, apply: true, note: `lesion of ${units.length} selected units` });
     A.cmp = true;
     setEditsPanel(true);
-    document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } }));
+    document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } }));
     noteBar("weights", `Removed ${units.length} unit${units.length === 1 ? "" : "s"} from the weights: one edit, applied`);
   } catch (err) { noteBar("weights", `Couldn't lesion: ${err.message}`); }
 }
 
 async function restoreOriginal() {
   try {
-    await post("/brainscan/workbench/revert");
-    document.dispatchEvent(new CustomEvent("brainscan:workbench"));
-    document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } }));
+    await post("/llminspect/workbench/revert");
+    document.dispatchEvent(new CustomEvent("llminspect:workbench"));
+    document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } }));
     noteBar("weights", "Original weights restored");
   } catch (err) { noteBar("weights", `Couldn't restore: ${err.message}`); }
 }
@@ -1394,12 +1394,12 @@ function setupBar() {
       { id: "rerun", group: "Verify", label: "Re-run the chat", hint: "Ask the chat's question again on the original and the edited weights",
         need: () => (!A.applied ? "an applied weight edit" : !A.runId ? "a chat" : null), run: rerunChat },
       { id: "checks", group: "Verify", label: "Run checks", hint: "Every saved behavior check, before and after the applied edits",
-        run: () => { setEditsPanel(true); document.dispatchEvent(new CustomEvent("brainscan:checks", { detail: { run: true } })); } },
+        run: () => { setEditsPanel(true); document.dispatchEvent(new CustomEvent("llminspect:checks", { detail: { run: true } })); } },
       { id: "cmp", group: "Verify", label: () => (A.cmp ? "vs original: on" : "vs original"), hint: "Color units by how the applied edits changed their effect on this word",
         need: () => (!A.applied ? "an applied weight edit" : needWord()), run: toggleCompare },
     ],
   });
-  document.addEventListener("brainscan:edit-state", (ev) => { A.applied = ev.detail?.applied || 0; refreshBar("weights"); });
+  document.addEventListener("llminspect:edit-state", (ev) => { A.applied = ev.detail?.applied || 0; refreshBar("weights"); });
 }
 
 // ---------------------------------------------------------------- dock trace
@@ -1527,7 +1527,7 @@ function overlay() {
   let html = null;
   if (!A.atlas) {
     const err = A.atlasError;
-    html = err?.status === 404 ? `<b>Weight anatomy is off</b><span>Start the recorder without <code>BRAINSCAN_ANATOMY=0</code>.</span>`
+    html = err?.status === 404 ? `<b>Weight anatomy is off</b><span>Start the recorder without <code>LLMINSPECT_ANATOMY=0</code>.</span>`
       : err && err.status !== 503 ? `<b>Could not load the weight graph</b><span>${esc(err.message)}</span>`
         : `<div class="spinner"></div><b>Mapping the weights…</b><span>The first start on a model clusters its MLP neurons and scores unit-to-unit edges once, then caches them.</span>`;
   }
@@ -1616,7 +1616,7 @@ async function selectUnit(g, keepView = false) {
   $("#an-unit-where").textContent = unitName(g);
   if (!keepView) $("#an-detail").innerHTML = `<div class="skeleton"></div><div class="skeleton short"></div><div class="skeleton tall"></div>`;
   try {
-    const d = await api(`/brainscan/anatomy/units/${g}`);
+    const d = await api(`/llminspect/anatomy/units/${g}`);
     if (A.selected !== g) return;
     A.detail = d;
     renderDetail();
@@ -1737,7 +1737,7 @@ async function lesion(ev) {
   const g = A.selected; ev.target.disabled = true;
   const msg = $("#an-lesion-msg");
   try {
-    const e = await post(`/brainscan/anatomy/units/${g}/lesion`, { factor: 0 });
+    const e = await post(`/llminspect/anatomy/units/${g}/lesion`, { factor: 0 });
     msg.className = "wb-msg ok";
     msg.innerHTML = `Added “${esc(e.summary)}” to the edit stack in Tune. Apply it there; recordings made while it is applied are tagged.`;
   } catch (err) { msg.className = "wb-msg error"; msg.textContent = err.message; }
@@ -1820,7 +1820,7 @@ async function loadTile(win) {
   if (win) Object.assign(body, { r0: win[0], r1: win[1], c0: win[2], c1: win[3] });
   $("#an-crumb").textContent = "loading…";
   try {
-    const tile = await post("/brainscan/anatomy/tile", body);
+    const tile = await post("/llminspect/anatomy/tile", body);
     if (seq !== H.seq) return;
     H.tile = tile; H.vals = b64Halves(tile.data);
     // Color range: RMS bins from their 0.5th to 99.5th percentile (they are all positive and often
@@ -1958,7 +1958,7 @@ function pumpThumbs() {
   while (thumbActive < 3 && thumbQueue.length) {
     const [g, level, key] = thumbQueue.pop();  // newest first: what is on screen now
     thumbActive++;
-    post("/brainscan/anatomy/tile", { unit: g, matrix: "writes", mode: "rms", h: level ? 48 : 16, w: level ? 160 : 56 })
+    post("/llminspect/anatomy/tile", { unit: g, matrix: "writes", mode: "rms", h: level ? 48 : 16, w: level ? 160 : 56 })
       .then(async (t) => {
         const v = b64Halves(t.data), sorted = Array.from(v).sort((a, b) => a - b);
         const lo = sorted[Math.floor(sorted.length * 0.01)], hi = sorted[Math.floor(sorted.length * 0.99)] || lo + 1e-6;
@@ -1977,7 +1977,7 @@ function resetThumbs() { graph.clearThumbs(); thumbPending.clear(); thumbQueue.l
 // ---------------------------------------------------------------- jump-to palette (⌘K)
 async function loadParams() {
   if (A.params) return;
-  try { A.params = await api("/brainscan/anatomy/params"); } catch { A.params = []; }
+  try { A.params = await api("/llminspect/anatomy/params"); } catch { A.params = []; }
 }
 const P = { items: [], active: 0 };
 const bare = (s) => (s || "").replace(/^[\sĠ▁·]+/, "").toLowerCase();
@@ -2193,21 +2193,21 @@ function boot() {
   setupInput();
   setupBar();
   stopPlay();
-  document.addEventListener("brainscan:view", (ev) => {
+  document.addEventListener("llminspect:view", (ev) => {
     A.visible = ev.detail === "weights";
     graph.setState({ visible: A.visible, live: A.visible && isLive() });  // hidden → loop stops
     if (A.visible) activate(); else stopPlay();
   });
   // A hidden view catches up in activate(), so switching runs in the Scanner costs nothing here.
-  document.addEventListener("brainscan:run", (ev) => { if (A.atlas && A.visible && ev.detail !== A.runId) openRun(ev.detail); });
-  document.addEventListener("brainscan:focus-layer", (ev) => { if (A.atlas) graph.flyToLayer(Number(ev.detail)); });
-  document.addEventListener("brainscan:model", resetModel);
+  document.addEventListener("llminspect:run", (ev) => { if (A.atlas && A.visible && ev.detail !== A.runId) openRun(ev.detail); });
+  document.addEventListener("llminspect:focus-layer", (ev) => { if (A.atlas) graph.flyToLayer(Number(ev.detail)); });
+  document.addEventListener("llminspect:model", resetModel);
   // A message sent from a composer: follow its tokens live (ui/chat.js).
-  document.addEventListener("brainscan:expect-run", () => { if (A.atlas) setFollow(true); });
-  const convoPref = (() => { try { return localStorage.getItem("brainscan-convo"); } catch { return null; } })();
+  document.addEventListener("llminspect:expect-run", () => { if (A.atlas) setFollow(true); });
+  const convoPref = (() => { try { return localStorage.getItem("llminspect-convo"); } catch { return null; } })();
   setConvo(convoPref ? convoPref === "1" : innerWidth >= 1000);
   renderConvo(true);
-  document.addEventListener("brainscan:trace", (ev) => {  // from the guide
+  document.addEventListener("llminspect:trace", (ev) => {  // from the guide
     const d = ev.detail || {};
     if (d.cmp) A.cmp = true;  // e.g. the first word an edit changed: compare with the original weights
     if (d.word != null) {  // "why this token" for a token picked in another view

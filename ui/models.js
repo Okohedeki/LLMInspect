@@ -1,5 +1,5 @@
 // The model picker: open-weights models already on this machine, from the model badge in the top
-// bar. Loading one unloads the current model; Brainscan never downloads anything.
+// bar. Loading one unloads the current model; LLMInspect never downloads anything.
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -19,7 +19,7 @@ const nameOf = (spec) => M.data?.models.find((m) => m.spec === spec)?.name || sp
 
 async function load() {
   const seq = ++M.seq;
-  try { M.data = await api("/brainscan/models"); M.error = null; } catch (err) { M.error = err.message; }
+  try { M.data = await api("/llminspect/models"); M.error = null; } catch (err) { M.error = err.message; }
   if (seq !== M.seq) return;
   render();
   clearTimeout(M.timer);
@@ -67,8 +67,8 @@ function render() {
     ${status}
     <ul class="mp-list">${rows || `<li class="empty">No models found in the folders below.</li>`}</ul>
     <p class="hint mp-foot">Searched ${d.roots.map((r) => `<code>${esc(r)}</code>`).join(", ")} and the local Ollama store.
-      Add folders with <code>BRAINSCAN_MODEL_DIRS</code> in brainscan.env. Brainscan never downloads models: to add
-      one from Hugging Face, run <code>hf download Org/Name --local-dir ~/.cache/brainscan/models/Org--Name</code> in WSL,
+      Add folders with <code>LLMINSPECT_MODEL_DIRS</code> in llminspect.env. LLMInspect never downloads models: to add
+      one from Hugging Face, run <code>hf download Org/Name --local-dir ~/.cache/llminspect/models/Org--Name</code> in WSL,
       then reopen this list.</p>`;
 
   body.querySelectorAll("button[data-i]").forEach((b) => { b.onclick = () => { M.confirm = d.models[Number(b.dataset.i)].spec; render(); }; });
@@ -79,7 +79,7 @@ function render() {
 async function switchTo(spec) {
   M.sending = true; M.confirm = null; M.error = null; render();
   try {
-    await api("/brainscan/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec }) });
+    await api("/llminspect/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec }) });
   } catch (err) { M.error = err.message; }
   M.sending = false;
   load();
@@ -109,7 +109,7 @@ function close() {
 function boot() {
   $("#model-badge").addEventListener("click", () => (M.open ? close() : open()));
   $("#mp-close").onclick = close;
-  document.addEventListener("brainscan:models", open);  // from the guide
+  document.addEventListener("llminspect:models", open);  // from the guide
   document.addEventListener("pointerdown", (ev) => {
     if (M.open && !ev.target.closest("#model-picker, #model-badge")) close();
   });

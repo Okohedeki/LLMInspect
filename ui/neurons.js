@@ -1,9 +1,9 @@
 // The Neurons view: a secondary screen for single MLP neurons ("L5 N120"). A card says what a
 // neuron does (logit lens, steering effect at ±dose, where it fires, what feeds it and what it feeds);
 // a steer set doses one or more neurons with dose scaling and answers a prompt at several dose levels
-// to verify, or steers the chat itself (brainscan/recorder/neurons.py). Any neuron named in the app
-// opens here: a [data-open-neuron] link anywhere, or the brainscan:neuron event.
-// A steer set can be saved as a knob (brainscan/recorder/knobs.py): a named set of neurons with doses,
+// to verify, or steers the chat itself (llminspect/recorder/neurons.py). Any neuron named in the app
+// opens here: a [data-open-neuron] link anywhere, or the llminspect:neuron event.
+// A steer set can be saved as a knob (llminspect/recorder/knobs.py): a named set of neurons with doses,
 // per model, that Steer, Ablate and Monitor use without finding the neurons again. The Knobs panel
 // lists them; the tools that take a knob (choices) are on this screen's bar and in those actions.
 import { defineBar, noteBar, refreshBar } from "/ui/actionbar.js";
@@ -26,7 +26,7 @@ const post = (path, body) => api(path, { method: "POST", headers: { "Content-Typ
 const N = { name: null, dose: 1, card: null, loading: null, history: [], set: [], sweep: null, busy: false, steering: [],
   index: null, results: null, searching: null, timer: 0,
   model: null, knobs: [], knobSeq: 0, factors: {}, confirm: null, kbusy: null, from: null };
-const SET_KEY = "brainscan-neuron-set";  // + ":<model name>": a steer set belongs to one model
+const SET_KEY = "llminspect-neuron-set";  // + ":<model name>": a steer set belongs to one model
 
 function message(text, tone = "") {
   const el = $("#nv-msg");
@@ -46,7 +46,7 @@ async function open(name, { push = true } = {}) {
   N.card = null;
   render();
   try {
-    const card = await api(`/brainscan/neurons/${encodeURIComponent(name)}?dose=${N.dose}`);
+    const card = await api(`/llminspect/neurons/${encodeURIComponent(name)}?dose=${N.dose}`);
     if (N.loading !== name) return;
     N.card = card;
     message("");
@@ -111,7 +111,7 @@ const snip = (c) => (c ? `<span class="t">…${esc(c.before.slice(-60))}<mark>${
 
 // ---------------------------------------------------------------- the index and search
 async function loadIndex() {
-  try { N.index = await api("/brainscan/neurons/index"); } catch { N.index = null; }
+  try { N.index = await api("/llminspect/neurons/index"); } catch { N.index = null; }
   renderIndex();
   if (N.index?.status === "building") { clearTimeout(N.timer); N.timer = setTimeout(loadIndex, 1500); }
 }
@@ -127,11 +127,11 @@ function renderIndex() {
   el.innerHTML = x.status === "building" ? `Building the neuron index: ${esc(x.step || "")} ${Math.round((x.progress || 0) * 100)}%. The model is busy until it's done.`
     : x.status === "error" ? `<span class="warn-text">The index build failed: ${esc(x.error)}</span> ${esc(built)}`
     : m ? `${esc(built)} <button type="button" class="link" data-build>Rebuild</button>`
-    : `No neuron index for this model yet. <button type="button" class="link" data-build>Build it</button>: one read of the corpus (the starter texts, your recorded runs and any text in the data folder's corpus/, or BRAINSCAN_CORPUS) keeps every neuron's top contexts and lens.`;
+    : `No neuron index for this model yet. <button type="button" class="link" data-build>Build it</button>: one read of the corpus (the starter texts, your recorded runs and any text in the data folder's corpus/, or LLMINSPECT_CORPUS) keeps every neuron's top contexts and lens.`;
 }
 
 async function buildIndex() {
-  try { N.index = await post("/brainscan/neurons/index", {}); } catch (err) { message(err.message, "error"); }
+  try { N.index = await post("/llminspect/neurons/index", {}); } catch (err) { message(err.message, "error"); }
   loadIndex();
 }
 
@@ -139,7 +139,7 @@ async function search(q) {
   q = String(q || "").trim();
   if (q.length < 2) { message("Search for at least two characters.", "error"); return; }
   N.searching = q; N.results = null; renderResults();
-  try { N.results = await api(`/brainscan/neurons/search?q=${encodeURIComponent(q)}&limit=12`); message(""); }
+  try { N.results = await api(`/llminspect/neurons/search?q=${encodeURIComponent(q)}&limit=12`); message(""); }
   catch (err) { message(err.message, "error"); }
   N.searching = null; renderResults();
 }
@@ -218,7 +218,7 @@ async function runSweep() {
   const factors = $("#nv-factors").value.split(/[,\s]+/).map(Number).filter((x) => Number.isFinite(x)).slice(0, 8);
   N.busy = true; N.sweep = null; renderSweep(); refreshBar("neurons");
   try {
-    N.sweep = await post("/brainscan/neurons/sweep", { prompt, steers: N.set, factors: factors.length ? factors : [0, 1], max_tokens: Number($("#nv-max").value) || 60 });
+    N.sweep = await post("/llminspect/neurons/sweep", { prompt, steers: N.set, factors: factors.length ? factors : [0, 1], max_tokens: Number($("#nv-max").value) || 60 });
     message("");
   } catch (err) { message(err.message, "error"); }
   N.busy = false; renderSweep(); refreshBar("neurons");
@@ -235,14 +235,14 @@ function renderSweep() {
 }
 
 async function refreshSteering() {
-  try { N.steering = (await api("/brainscan/neurons")).steering || []; } catch { N.steering = []; }
+  try { N.steering = (await api("/llminspect/neurons")).steering || []; } catch { N.steering = []; }
   renderSet(); refreshBar("neurons");
 }
 
 /** Steering changed here: the knob rows, this bar and Watch's steering panel (ui/app.js) catch up. */
 async function steeringChanged() {
   await Promise.all([refreshSteering(), loadKnobs()]);
-  document.dispatchEvent(new CustomEvent("brainscan:steering"));
+  document.dispatchEvent(new CustomEvent("llminspect:steering"));
 }
 
 async function steerChat() {
@@ -250,23 +250,23 @@ async function steerChat() {
   try {
     // Pressing it again replaces the set's steers rather than stacking them; a knob's steers stay.
     await refreshSteering();
-    for (const iv of N.steering.filter((x) => !x.knob)) await api(`/brainscan/interventions/${iv.id}`, { method: "DELETE" }).catch(() => {});
-    for (const s of N.set) await post("/brainscan/neurons/steer", { neuron: s.neuron, dose: s.dose, phase: "all" });
+    for (const iv of N.steering.filter((x) => !x.knob)) await api(`/llminspect/interventions/${iv.id}`, { method: "DELETE" }).catch(() => {});
+    for (const s of N.set) await post("/llminspect/neurons/steer", { neuron: s.neuron, dose: s.dose, phase: "all" });
     await steeringChanged();
     noteBar("neurons", "Every new request is steered with the set, prompt and reply alike, and marked ▲steered");
   } catch (err) { message(err.message, "error"); }
 }
 
 async function unsteer() {
-  for (const iv of N.steering) await api(`/brainscan/interventions/${iv.id}`, { method: "DELETE" }).catch(() => {});
+  for (const iv of N.steering) await api(`/llminspect/interventions/${iv.id}`, { method: "DELETE" }).catch(() => {});
   await steeringChanged();
   noteBar("neurons", "Neuron steering removed");
 }
 
 // ---------------------------------------------------------------- knobs
-// A knob is the steer set with a name (brainscan/recorder/knobs.py). Steering one writes its neurons
+// A knob is the steer set with a name (llminspect/recorder/knobs.py). Steering one writes its neurons
 // at their doses × a multiple, tagged with the knob, so steering it again replaces it.
-const kurl = (name, tail = "") => `/brainscan/knobs/${encodeURIComponent(name)}${tail}`;
+const kurl = (name, tail = "") => `/llminspect/knobs/${encodeURIComponent(name)}${tail}`;
 const knobOf = (name) => N.knobs.find((k) => k.name === name);
 const dose = (x) => `${x >= 0 ? "+" : "−"}${+Math.abs(x).toFixed(2)}`;
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -274,7 +274,7 @@ const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 async function loadKnobs() {
   const seq = ++N.knobSeq;
   let r = null;
-  try { r = await api("/brainscan/knobs"); } catch { /* an older recorder, or still loading: keep what is shown */ }
+  try { r = await api("/llminspect/knobs"); } catch { /* an older recorder, or still loading: keep what is shown */ }
   if (seq !== N.knobSeq) return;
   if (r) { N.knobs = r.knobs || []; N.knobError = r.error || null; }
   renderKnobs(); renderSet(); refreshBar("neurons");
@@ -345,14 +345,14 @@ async function monitorKnob(name) {
   const rules = await post(kurl(name, "/monitor"), {});
   const n = Array.isArray(rules) ? rules.length : 0, first = rules?.[0];
   const rest = first?.rule ? String(first.rule).replace(first.direction || "", "").trim() : "";  // "z ≥ 4 for 2 tokens in a row, on …"
-  document.dispatchEvent(new CustomEvent("brainscan:monitors"));
+  document.dispatchEvent(new CustomEvent("llminspect:monitors"));
   knobMsg(`Watching ${count(n, "neuron")} of ${name}${rest ? `: a flag when ${rest}` : ""}.`, "ok", `<button type="button" class="link" data-pick="monitor">Open the Monitor action</button>`);
   noteBar("neurons", `Watching ${count(n, "neuron")} of knob ${name}`);
 }
 
 async function ablateKnob(name) {
   await post(kurl(name, "/ablate"), { factor: 0 });
-  document.dispatchEvent(new CustomEvent("brainscan:workbench"));  // the edit stack (ui/edits.js) and Tune refresh
+  document.dispatchEvent(new CustomEvent("llminspect:workbench"));  // the edit stack (ui/edits.js) and Tune refresh
   knobMsg("Edit added (not applied): apply it in Ablate › Apply.", "ok",
     `<button type="button" class="link" data-pick="ablate">Open Ablate</button> <button type="button" class="link" data-show="workbench">Edit stack in Tune</button>`);
   noteBar("neurons", `Edit for knob ${name} added, not applied`);
@@ -409,7 +409,7 @@ async function saveKnob(ev) {
   ev.preventDefault();
   if (!N.set.length) { saveMsg("Add a neuron to the steer set first.", "error"); return; }
   try {
-    const k = await post("/brainscan/knobs", { name: $("#nv-kname").value.trim(), description: $("#nv-kdesc").value.trim(), neurons: N.set });
+    const k = await post("/llminspect/knobs", { name: $("#nv-kname").value.trim(), description: $("#nv-kdesc").value.trim(), neurons: N.set });
     N.from = k?.name || $("#nv-kname").value.trim();
     $("#nv-save").hidden = true; $("#nv-kname").value = ""; $("#nv-kdesc").value = "";
     saveMsg("");
@@ -499,17 +499,17 @@ function boot() {
   });
   $("#nv-body").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-trace-unit]");
-    if (b) { document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "weights" })); document.dispatchEvent(new CustomEvent("brainscan:trace", { detail: { unit: Number(b.dataset.traceUnit) } })); }
+    if (b) { document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "weights" })); document.dispatchEvent(new CustomEvent("llminspect:trace", { detail: { unit: Number(b.dataset.traceUnit) } })); }
   });
   // A neuron named anywhere in the app opens here (capture phase: before a row's own click).
   document.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-open-neuron]");
     if (!b) return;
     ev.preventDefault(); ev.stopPropagation();
-    document.dispatchEvent(new CustomEvent("brainscan:neuron", { detail: b.dataset.openNeuron }));
+    document.dispatchEvent(new CustomEvent("llminspect:neuron", { detail: b.dataset.openNeuron }));
   }, true);
-  document.addEventListener("brainscan:neuron", (ev) => {
-    if ($("#view-neurons").hidden) document.dispatchEvent(new CustomEvent("brainscan:show", { detail: "neurons" }));
+  document.addEventListener("llminspect:neuron", (ev) => {
+    if ($("#view-neurons").hidden) document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "neurons" }));
     open(ev.detail);
   });
   $("#nv-save").addEventListener("submit", saveKnob);
@@ -522,11 +522,11 @@ function boot() {
   });
   $("#nk-msg").addEventListener("click", (ev) => {  // a link in a knob message: an action to pick, or a screen
     const b = ev.target.closest("[data-pick], [data-show]");
-    if (b) document.dispatchEvent(new CustomEvent(b.dataset.pick ? "brainscan:pick" : "brainscan:show", { detail: b.dataset.pick || b.dataset.show }));
+    if (b) document.dispatchEvent(new CustomEvent(b.dataset.pick ? "llminspect:pick" : "llminspect:show", { detail: b.dataset.pick || b.dataset.show }));
   });
-  document.addEventListener("brainscan:status", (ev) => onStatus(ev.detail));  // every poll (ui/app.js)
-  document.addEventListener("brainscan:view", (ev) => { if (ev.detail === "neurons") { refreshSteering(); loadIndex(); loadKnobs(); } });
-  document.addEventListener("brainscan:model", (ev) => {
+  document.addEventListener("llminspect:status", (ev) => onStatus(ev.detail));  // every poll (ui/app.js)
+  document.addEventListener("llminspect:view", (ev) => { if (ev.detail === "neurons") { refreshSteering(); loadIndex(); loadKnobs(); } });
+  document.addEventListener("llminspect:model", (ev) => {
     N.card = null; N.history = []; N.sweep = null; N.results = null; N.steering = [];
     adoptModel(ev.detail?.name);
     render(); renderSweep(); renderResults(); renderKnobs(); loadIndex(); refreshSteering(); loadKnobs();
@@ -536,6 +536,6 @@ function boot() {
   refreshSteering();
   loadIndex();
   loadKnobs();
-  api("/brainscan/status").then(onStatus).catch(() => { /* the recorder is loading: the next poll tells */ });
+  api("/llminspect/status").then(onStatus).catch(() => { /* the recorder is loading: the next poll tells */ });
 }
 boot();

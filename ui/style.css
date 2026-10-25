@@ -1,4 +1,4 @@
-/* Brainscan. Design tokens first; every color the canvases draw with is a token too, so both
+/* LLMInspect. Design tokens first; every color the canvases draw with is a token too, so both
    themes stay in step. Light is the base; dark applies with the system setting or the toggle. */
 :root {
   color-scheme: light;

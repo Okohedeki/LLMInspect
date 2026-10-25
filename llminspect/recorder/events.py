@@ -3,7 +3,7 @@
 Any harness that talks to the endpoint sends its whole transcript, so user turns,
 tool results, errors and test summaries can be found without harness cooperation.
 Harnesses add what the transcript can't show (verdicts, file edits) through
-POST /brainscan/events.
+POST /llminspect/events.
 """
 
 from __future__ import annotations

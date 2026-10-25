@@ -5,8 +5,8 @@ write_file, run_tests) and reports what the transcript can't show to the recorde
 side channel: the task label, every file edit (flagging edits to tests), and the
 final verdict from a clean test run.
 
-    scripts/run.sh -m brainscan.harness.mini_agent --task fix_fizzbuzz
-    scripts/run.sh -m brainscan.harness.mini_agent --task all --repeats 3
+    scripts/run.sh -m llminspect.harness.mini_agent --task fix_fizzbuzz
+    scripts/run.sh -m llminspect.harness.mini_agent --task all --repeats 3
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ TOOLS = [
 
 def post_event(base_url: str, run_id: str, etype: str, data: dict) -> None:
     root = base_url.rsplit("/v1", 1)[0]
-    req = urlrequest.Request(f"{root}/brainscan/events", method="POST",
+    req = urlrequest.Request(f"{root}/llminspect/events", method="POST",
                              data=json.dumps({"run": run_id, "type": etype, "data": data}).encode(),
                              headers={"Content-Type": "application/json"})
     urlrequest.urlopen(req, timeout=10).read()
@@ -102,10 +102,10 @@ def execute(name: str, args: dict, sandbox: Path, report) -> str:
 def run_task(task: str, base_url: str, max_steps: int, temperature: float, seed: int | None,
              thinking: str = "default", max_tokens: int = 3072) -> dict:
     source = TASKS / task
-    sandbox = Path(tempfile.mkdtemp(prefix=f"brainscan-{task}-"))
+    sandbox = Path(tempfile.mkdtemp(prefix=f"llminspect-{task}-"))
     shutil.copytree(source, sandbox, dirs_exist_ok=True, ignore=shutil.ignore_patterns("task.md", "__pycache__"))
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{task}-{uuid.uuid4().hex[:4]}"
-    client = OpenAI(base_url=base_url, api_key="brainscan", default_headers={"X-Brainscan-Run": run_id})
+    client = OpenAI(base_url=base_url, api_key="llminspect", default_headers={"X-LLMInspect-Run": run_id})
 
     def report(etype: str, data: dict) -> None:
         post_event(base_url, run_id, etype, data)
