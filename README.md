@@ -7,7 +7,7 @@ use it as a drop-in model. While the model works, LLMInspect records what happen
 token. You can then see why it wrote what it wrote, steer it while it runs, and edit its weights
 and measure what changed.
 
-LLMInspect was ported from Brainscan, the project's earlier private repository.
+LLMInspect is a port of [Brainscan](https://github.com/Okohedeki/brainscan), the project's earlier repository.
 
 ## What it can do
 
