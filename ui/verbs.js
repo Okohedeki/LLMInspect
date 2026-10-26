@@ -129,8 +129,8 @@ defineVerbs([
     lead: "What the weight edits did: the chat asked again on both weights, your own prompts with drift on neutral text, the circuit behind a word before and after.",
     steps: [
       { id: "change", label: "Change", view: "workbench", focus: "#h-edit", done: applied,
-        what: "Apply at least one weight edit: from Ablate or Scale, or the edit form here.",
-        tools: ["workbench:edit", "workbench:apply"] },
+        what: "Apply at least one weight edit: from Ablate or Scale, or the edit form here. Or load a checkpoint (a fine-tune, a quantized copy) and apply it: its weights replace the base's.",
+        tools: ["workbench:edit", "workbench:checkpoint", "workbench:apply"] },
       { id: "rerun", label: "Re-run", view: "workbench", focus: "#h-compare",
         what: "Ask the open chat's question again on the original and the edited weights, side by side.",
         tools: ["workbench:rerun"] },

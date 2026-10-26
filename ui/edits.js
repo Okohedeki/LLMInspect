@@ -16,6 +16,8 @@ async function api(path, opts) {
   return body;
 }
 const send = (method, path, body) => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+// A checkpoint edit reads "checkpoint: <name>" (its summary says so; this covers an edit without one).
+const editText = (e) => (e.kind === "checkpoint" && !/^checkpoint/.test(e.summary || "") ? `checkpoint: ${e.checkpoint?.name || "candidate"}` : e.summary);
 
 const E = { stack: null, checks: [], results: null, replay: null, busy: null, msg: null, roots: [] };
 const currentRun = () => $("#run-select")?.value || null;
@@ -43,7 +45,7 @@ function stackHtml() {
   if (!s) return `<section class="ed-sec"><p class="muted">Loading the edit stack…</p></section>`;
   const n = applied();
   const rows = s.edits.map((e) => `<li data-id="${e.id}" class="${e.applied ? "on" : ""}">
-      <label class="check"><input type="checkbox" data-toggle ${e.enabled ? "checked" : ""} ${E.busy ? "disabled" : ""}><span>${esc(e.summary)}</span></label>
+      <label class="check"><input type="checkbox" data-toggle ${e.enabled ? "checked" : ""} ${E.busy ? "disabled" : ""}><span>${esc(editText(e))}</span></label>
       ${e.applied ? `<span class="pill ok">applied</span>` : ""}
       <button type="button" class="tbtn icon" data-remove aria-label="Remove this edit" ${e.applied ? "disabled title=\"Restore the original weights first\"" : "title=\"Remove\""}>✕</button></li>`).join("");
   return `<section class="ed-sec">

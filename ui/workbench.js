@@ -15,6 +15,8 @@ async function api(path, opts) {
 const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 const lines = (sel) => $(sel).value.split("\n").map((s) => s.trim()).filter(Boolean);
 const pct = (x) => `${Math.round(x * 100)}%`;
+// A checkpoint edit reads "checkpoint: <name>" (its summary says so; this covers an edit without one).
+const editText = (e) => (e.kind === "checkpoint" && !/^checkpoint/.test(e.summary || "") ? `checkpoint: ${e.checkpoint?.name || "candidate"}` : e.summary);
 
 const W = { sweep: null, layer: null, status: null };
 
@@ -175,7 +177,7 @@ function renderEdits() {
   const applied = new Set(wb.applied.map((e) => e.id));
   $("#wb-list").innerHTML = wb.edits.map((e) => `<li class="${e.enabled ? "" : "off"}" data-id="${e.id}">
       <input type="checkbox" ${e.enabled ? "checked" : ""} aria-label="Include in stack">
-      <span class="desc">${esc(e.summary)}</span>
+      <span class="desc">${esc(editText(e))}</span>
       ${applied.has(e.id) ? `<span class="badge good">applied</span>` : ""}
       <button aria-label="Remove edit" ${applied.has(e.id) ? "disabled title=\"Restore the original weights first\"" : ""}>✕</button></li>`).join("") ||
     `<li class="muted" style="border:none;background:none;padding:0">No edits yet.</li>`;

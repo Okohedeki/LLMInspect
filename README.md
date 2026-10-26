@@ -29,6 +29,10 @@ LLMInspect is a port of [Brainscan](https://github.com/Okohedeki/brainscan), the
 - **Edit the weights.** Remove or scale attention heads, neurons and groups of neurons, or remove
   a direction from the weights. Compare the original and edited models side by side, run behavior
   checks on every change, and export the edited model.
+- **Compare checkpoints.** Load a fine-tune, a quantized copy or a downloaded build next to the base
+  model. See which layers, neurons, attention heads and token rows changed and how concentrated the
+  change is, then compare the two models' behavior. Only safetensors and GGUF files are read, never
+  pickle, and nothing is downloaded.
 - **Work with your models.** Load Hugging Face checkpoints, local GGUF files or Ollama models, and
   switch between them from the UI. Reasoning models' thinking is recorded separately. GPU memory
   can be capped so other apps keep running.

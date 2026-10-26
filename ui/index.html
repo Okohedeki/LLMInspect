@@ -383,6 +383,28 @@
       <div class="wb-msg" id="wb-edit-msg" role="status"></div>
     </section>
 
+    <section class="panel wb-checkpoint" id="cp-panel" aria-labelledby="h-checkpoint">
+      <div class="panel-head">
+        <h2 id="h-checkpoint">Compare checkpoints</h2>
+        <span class="muted small" id="cp-base"></span>
+      </div>
+      <p class="hint">Load a fine-tune, a quantized copy or a downloaded build of this model to see where its weights differ.
+        It joins the edit stack as one edit: apply it and Compare, Checks and Trace compare the two. Only safetensors and
+        GGUF are read (never pickle), and nothing is downloaded.</p>
+      <form class="row cp-form" id="cp-form">
+        <label>Candidate
+          <input id="cp-spec" type="text" list="cp-models" spellcheck="false" autocomplete="off" autocapitalize="off"
+            placeholder="a model on this machine, a folder, a .gguf file, ollama:tag or a cached Hugging Face repo id">
+          <datalist id="cp-models"></datalist>
+        </label>
+        <button type="submit" class="primary" id="cp-load">Load candidate</button>
+      </form>
+      <div class="wb-msg" id="cp-msg" role="status"></div>
+      <div class="cp-hist" id="cp-hist" hidden></div>
+      <div class="cp-actions" id="cp-actions" hidden></div>
+      <div class="cp-body" id="cp-body"></div>
+    </section>
+
     <section class="panel wb-compare" aria-labelledby="h-compare">
       <div class="panel-head"><h2 id="h-compare">3 · Compare original and edited</h2></div>
       <div class="wb-replay" data-edits="replay"></div>
@@ -525,6 +547,7 @@
   <script type="module" src="/ui/monitors.js"></script>
   <script type="module" src="/ui/neurons.js"></script>
   <script type="module" src="/ui/workbench.js"></script>
+  <script type="module" src="/ui/checkpoints.js"></script>
   <script type="module" src="/ui/weights.js"></script>
   <script type="module" src="/ui/verbs.js"></script>
 </body>

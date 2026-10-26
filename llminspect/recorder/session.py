@@ -32,6 +32,7 @@ from .anatomy import Anatomy
 from .capture import MODES, PHASES, Intervention, LayerTap, predict
 from .chat import (THINK_CLOSE, THINK_OPEN, common_prefix, parse_tool_calls, render, split_reasoning,
                    to_template_messages)
+from .checkpoints import Checkpoints
 from .directions import DirectionBank
 from .edits import EditStack
 from .events import message_events
@@ -183,6 +184,7 @@ class Recorder:
         self.tracer = Tracer(self) if self.anatomy is not None else None  # needs the unit map
         self.neurons = Neurons(self)
         self.neuron_index = NeuronIndex(self)  # loads this model's index if one was built
+        self.checkpoints = Checkpoints(self)   # compares a candidate checkpoint's weights with this model's
         self.knobs = KnobBank(store.root / "knobs" / f"{subject.slug}.json", self.neurons)
         self.watch: NeuronWatch | None = None  # hooks for neuron monitors; there only while one is enabled
         self.monitors.on_change = self._watch_changed
@@ -896,6 +898,8 @@ class Recorder:
     # ---- workbench -----------------------------------------------------------------
 
     def add_weight_edit(self, kind: str, direction: str | None = None, seed: int | None = None, **kwargs):
+        if kind == "checkpoint":
+            raise ValueError("a checkpoint edit comes from loading a candidate: POST /llminspect/workbench/checkpoint")
         vector = None
         if kind == "orthogonalize":
             if direction == "random":

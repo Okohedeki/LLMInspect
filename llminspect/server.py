@@ -584,6 +584,46 @@ async def revert_weight_edits():
     return await asyncio.to_thread(recorder().revert_weight_edits)
 
 
+def _checkpoint_call(fn, *args):
+    """A candidate checkpoint request, its failures mapped to HTTP codes."""
+    try:
+        return fn(*args)
+    except Busy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/llminspect/workbench/checkpoint")
+async def checkpoint_status():
+    """The candidate checkpoint job: {status: none|building|ready|error, step, progress, error, report, edit}.
+    The report is the latest one (left out while a job runs); the edit is the stack's checkpoint edit."""
+    return recorder().checkpoints.status()
+
+
+@app.post("/llminspect/workbench/checkpoint")
+async def checkpoint_load(request: Request):
+    """Load a candidate checkpoint of this model's architecture: {spec, note}, where spec is a checkpoint
+    folder, a .gguf file, ollama:<tag> or a Hugging Face repo id that is already in the local cache (nothing
+    is downloaded; pickle-based weights are refused). Compares its weights with the base in the background,
+    then adds a checkpoint edit to the stack; poll GET /llminspect/workbench/checkpoint. Apply and revert it
+    like any edit (POST /llminspect/workbench/apply, /revert)."""
+    body = await request.json()
+    rec = recorder()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "send a JSON object")
+    return await asyncio.to_thread(_checkpoint_call, rec.checkpoints.start, str(body.get("spec") or ""),
+                                   str(body.get("note") or ""))
+
+
+@app.get("/llminspect/workbench/checkpoint/reports")
+async def checkpoint_reports():
+    """Saved weight-difference reports for this model, newest first."""
+    return recorder().checkpoints.reports()
+
+
 @app.post("/llminspect/workbench/compare")
 async def compare_weight_edits(request: Request):
     body = await request.json()

@@ -16,6 +16,10 @@ change the parameters themselves, the way "abliterated" models are made:
   units          scale a set of units together, as one edit: attention heads and groups of
                  MLP neurons, each at its own layer. A knockout made permanent is one of these;
                  it changes the same weights as the matching scale edits.
+  checkpoint     put another checkpoint's weights in place (checkpoints.py): every tensor of
+                 a candidate that differs from the model's is copied in. It always applies
+                 first, so the other edits land on top of the candidate's weights. At most
+                 one per stack.
 
 Every parameter is copied to CPU before its first change. Applying the stack restores
 those copies and replays the enabled edits in order, so toggling, reordering and
@@ -35,7 +39,7 @@ from torch import nn
 ATTN_NAMES = ("self_attn", "linear_attn", "attn", "attention", "mixer")
 MLP_NAMES = ("mlp", "feed_forward", "ffn")
 WRITER_NAMES = {"o_proj", "out_proj", "down_proj", "c_proj", "dense_4h_to_h", "wo", "w2"}
-KINDS = ("orthogonalize", "scale", "units")
+KINDS = ("orthogonalize", "scale", "units", "checkpoint")
 ORTHO_TARGETS = ("embed", "attn_out", "mlp_out", "attn_in", "mlp_in", "unembed")
 SCALE_TARGETS = ("attn", "mlp", "head", "neuron")
 ROW_CHUNK = 16_384  # rows/columns per fp32 work block, keeps big matrices off the VRAM ceiling
@@ -143,10 +147,15 @@ class WeightEdit:
     enabled: bool = True
     note: str = ""
     units: list[dict] | None = None    # units: [{layer, target: head|neuron, index, name, g}]
+    checkpoint: dict | None = None     # checkpoint: {spec, folder, name, report, changed: [parameter names]}
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def summary(self) -> str:
         where = f"L{layer_ranges(self.layers)}"
+        if self.kind == "checkpoint":
+            n, name = len(self.checkpoint["changed"]), self.checkpoint["name"]
+            return (f"checkpoint: {name}, 1 tensor differs" if n == 1 else f"checkpoint: {name}, {n} tensors differ") + \
+                (f" ({self.note})" if self.note else "")
         if self.kind == "units":
             names = [u.get("name") or f"L{u['layer']} {u['target']}" for u in self.units]
             shown = ", ".join(names[:4]) + (f" +{len(names) - 4} more" if len(names) > 4 else "")
@@ -166,6 +175,9 @@ class WeightEdit:
                 "index": None if self.kind == "units" else self.index,
                 "units": [{"g": u.get("g"), "name": u.get("name"), "layer": u["layer"], "target": u["target"]}
                           for u in self.units] if self.units else None,
+                "checkpoint": None if self.checkpoint is None else {
+                    "name": self.checkpoint["name"], "spec": self.checkpoint["spec"], "folder": self.checkpoint["folder"],
+                    "report": self.checkpoint.get("report"), "tensors": len(self.checkpoint["changed"])},
                 "enabled": self.enabled, "note": self.note, "summary": self.summary()}
 
 
@@ -178,13 +190,17 @@ class EditStack:
         self.version = 0
         self._params = dict(subject.model.named_parameters())
         self._names = {id(p): n for n, p in self._params.items()}
+        self._readers: dict = {}  # checkpoint edit id -> the reader of its candidate's tensors
 
     # ---- building -----------------------------------------------------------------
 
     def add(self, kind: str, layers="all", targets=None, direction: str | None = None,
             vector: torch.Tensor | None = None, strength: float = 1.0, factor: float = 0.0,
-            index: int | None = None, note: str = "", units: list[dict] | None = None) -> WeightEdit:
+            index: int | None = None, note: str = "", units: list[dict] | None = None,
+            checkpoint: dict | None = None) -> WeightEdit:
         n_layers = self.s.n_layers
+        if kind == "checkpoint":
+            return self._add_checkpoint(checkpoint, note)
         if kind == "units":
             entries = []
             for u in units or []:
@@ -236,8 +252,34 @@ class EditStack:
         self.edits[edit.id] = edit
         return edit
 
+    def _add_checkpoint(self, checkpoint: dict | None, note: str) -> WeightEdit:
+        """A checkpoint edit from {spec, folder, name, report, changed}: the tensors in `changed` are
+        copied from the candidate folder when the edit is applied."""
+        from . import checkpoints  # late: checkpoints imports this module
+        if any(e.kind == "checkpoint" for e in self.edits.values()):
+            raise ValueError("the stack already has a checkpoint edit; remove it first")
+        ck = checkpoint or {}
+        if not (isinstance(ck.get("spec"), str) and isinstance(ck.get("folder"), str)
+                and isinstance(ck.get("changed"), list)):
+            raise ValueError("a checkpoint edit needs the candidate's spec, folder and changed tensors; "
+                             "load a candidate with POST /llminspect/workbench/checkpoint")
+        ck = {"spec": ck["spec"], "folder": ck["folder"], "name": str(ck.get("name") or ck["spec"]),
+              "report": ck.get("report"), "changed": [str(n) for n in ck["changed"]]}
+        reader = checkpoints.reader_for(ck, self.s.model)  # refuses a candidate that doesn't fit this model
+        layers = sorted({layer for layer in map(checkpoints.layer_of, ck["changed"]) if layer is not None})
+        edit = WeightEdit("checkpoint", layers, ["checkpoint"], note=note, checkpoint=ck)
+        self._readers[edit.id] = reader
+        try:
+            self._plan(edit)  # checks the candidate's files are there
+        except Exception:
+            self._readers.pop(edit.id, None)
+            raise
+        self.edits[edit.id] = edit
+        return edit
+
     def remove(self, eid: str) -> None:
         self.edits.pop(eid)
+        self._readers.pop(eid, None)
 
     def set_enabled(self, eid: str, enabled: bool) -> WeightEdit:
         self.edits[eid].enabled = enabled
@@ -253,6 +295,12 @@ class EditStack:
         """(parameter, in-place operation) pairs that carry out one edit."""
         d, ops = self.s.d_model, []
         model = self.s.model
+        if e.kind == "checkpoint":
+            reader = self._readers[e.id]
+            reader.require_files()
+            for name in e.checkpoint["changed"]:
+                ops.append((self._params[name], lambda p, name=name: p.copy_(reader.tensor(name))))  # cast to p's dtype and device
+            return ops
         if e.kind == "orthogonalize":
             a = e.strength
             for target in e.targets:
@@ -337,9 +385,10 @@ class EditStack:
 
     @torch.no_grad()
     def _apply_ids(self, ids: list[str]) -> None:
+        plans = [self._plan(self.edits[eid]) for eid in ids]  # an edit that can't be carried out fails before any weight changes
         self._restore()
-        for eid in ids:
-            for param, op in self._plan(self.edits[eid]):
+        for plan in plans:
+            for param, op in plan:
                 name = self._names[id(param)]
                 if name not in self.originals:
                     self.originals[name] = param.detach().to("cpu", copy=True)
@@ -348,8 +397,11 @@ class EditStack:
         self.version += 1
 
     def apply(self) -> list[str]:
-        """Bake every enabled edit into the weights, in insertion order."""
-        self._apply_ids([eid for eid, e in self.edits.items() if e.enabled])
+        """Bake every enabled edit into the weights, in insertion order, except that a checkpoint edit
+        goes first: the other edits then land on top of the candidate's weights."""
+        ids = [eid for eid, e in self.edits.items() if e.enabled]
+        ids.sort(key=lambda eid: self.edits[eid].kind != "checkpoint")  # stable: the rest keep their order
+        self._apply_ids(ids)
         return self.applied
 
     def revert(self) -> None:
@@ -378,6 +430,9 @@ class EditStack:
         return [self.edits[eid].describe() for eid in self.applied if eid in self.edits]
 
     def summary(self) -> dict:
+        ck = next((e for e in self.edits.values() if e.kind == "checkpoint"), None)
         return {"edits": [e.describe() | {"applied": eid in self.applied} for eid, e in self.edits.items()],
                 "applied": self.active(), "version": self.version,
+                "checkpoint": None if ck is None else {"id": ck.id, "name": ck.checkpoint["name"],
+                                                       "report": ck.checkpoint.get("report"), "applied": ck.id in self.applied},
                 "snapshot_bytes": sum(t.numel() * t.element_size() for t in self.originals.values())}

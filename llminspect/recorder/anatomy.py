@@ -368,6 +368,18 @@ class Anatomy:
             e = stack.edits.get(eid)
             if e is None:
                 continue
+            if e.kind == "checkpoint":  # a changed attention tensor marks its layer's heads, an MLP tensor its clusters
+                from .checkpoints import layer_of, module_of
+                for name in e.checkpoint["changed"]:
+                    layer, module = layer_of(name), module_of(name)
+                    if layer is None or layer >= len(self.layers):
+                        continue
+                    lm = self.layers[layer]
+                    if module in ("q", "k", "v", "o", "attn_norm"):
+                        out.update(range(lm.offset, lm.offset + lm.n_heads))
+                    elif module in ("gate", "up", "down", "mlp_norm"):
+                        out.update(range(lm.offset + lm.n_heads, lm.offset + lm.n_units))
+                continue
             if e.kind == "units":
                 for u in e.units:
                     lm = self.layers[u["layer"]]
