@@ -10,8 +10,8 @@
 //   tensors: [{ name, layer, module, rel, max_abs, changed_frac, lowrank }], counts: { changed, identical, not_compared },
 //   not_compared: [names], neurons: { top: [{ neuron, layer, index, rel }], layer_max: [{ layer, index, rel }] },
 //   heads: { top: [{ head, layer, index, rel }] }, tokens: { embed: [{ token_id, text, rel }], lm_head: [...] }, notes,
-//   summary: { total_rel, pattern: identical|concentrated|spread|mixed, tensors, top_tensors, top_share, max_share,
-//   layers: [{ layer, mean_rel }] } }.
+//   summary: { total_rel, pattern: identical|concentrated|spread|mixed, basis: matrix|1d, matrices, changed_matrices,
+//   tensors, top_tensors, top_share, max_share, layers: [{ layer, mean_rel }] } }.
 // The stack comes from the status poll (workbench: { edits, applied, checkpoint: { id, name } }) and /llminspect/workbench.
 import { extendBar, refreshBar } from "/ui/actionbar.js";
 
@@ -119,21 +119,25 @@ function headline(d) {
   const s = d.summary, b = (x) => `<b class="num">${x}</b>`;
   const share = num(s.top_share), most = num(s.max_share);
   const frac = num(s.top_frac) ?? (num(s.top_tensors) && num(s.tensors) ? s.top_tensors / s.tensors : 0.05);  // the tensors that carry `share`
+  // The pattern is read from the matrices; say so, and how many of them moved, next to what it is typical of.
+  const mats = num(s.matrices), moved = num(s.changed_matrices) ?? mats;
+  const where = s.basis === "1d" ? "1-D weights" : "matrices";
+  const of = mats && s.basis !== "1d" ? ` ${b(moved)} of ${b(mats)} ${where} moved` : "";
   if (!d.changed) return ["Identical: every compared tensor matches the base exactly.", "Applying it would leave the weights as they are."];
   if (d.pattern === "concentrated") {
     const total = num(s.tensors);
     if (total && d.changed <= num(s.top_tensors)) {  // every changed tensor is among the top: name the count itself
       return [`Concentrated: all of the change is in ${b(d.changed)} of ${b(total)} tensors.`, "Typical of a targeted edit."];
     }
-    return [share != null ? `Concentrated: ${b(pct(share))} of the change is in ${b(pct(frac))} of the tensors.` : "Concentrated: a few tensors carry most of the change.",
+    return [share != null ? `Concentrated: ${b(pct(share))} of the change is in ${b(pct(frac))} of the tensors${of}.` : `Concentrated: a few tensors carry most of the change${of}.`,
       "Typical of a targeted edit."];
   }
   if (d.pattern === "spread") {
-    return [`Spread: every tensor changed a little${most != null ? `, and none carries more than ${b(pct(most))} of the change` : ""}.`,
+    return [`Spread: the change is spread over the ${where}${of}${most != null ? `, and no one carries more than ${b(pct(most))}` : ""}.`,
       "Typical of quantization or a full fine-tune."];
   }
   if (d.pattern === "mixed") {
-    return [`Mixed: some tensors changed more than others${share != null ? `, with ${b(pct(frac))} of them carrying ${b(pct(share))}` : ""}.`,
+    return [`Mixed: some ${where} changed more than others${of}${share != null ? `, with ${b(pct(frac))} of the tensors carrying ${b(pct(share))}` : ""}.`,
       "It is neither confined to a few tensors nor uniform."];
   }
   return [`${b(d.changed)} of ${b(d.changed + d.identical)} tensors differ from the base.`, ""];
