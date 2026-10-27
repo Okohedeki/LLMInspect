@@ -60,7 +60,7 @@ RANK = 8                  # singular values counted in a matrix's low-rank share
 RANK_FROM = 1e-4          # ... for tensors whose rel is above this
 TOP_TENSORS = 0.05        # concentrated: this share of tensors carries CARRY of ||delta||^2
 CARRY = 0.80
-SPREAD_MAX = 0.10         # spread: every tensor changed and none carries more than this share
+SPREAD_MAX = 0.10         # spread: every matrix changed and none carries more than this share
 REL_CAP = 1e3             # a change from (almost) nothing is reported as this large, not infinite
 CHUNK = 1 << 24           # elements per block in elementwise passes
 HASH_CHUNK = 1 << 23      # bytes per block when hashing a file
@@ -430,7 +430,11 @@ def _units(acc: dict, label: str, name) -> dict:
             "layer_max": [row(layer, int(r.argmax()), float(r.max())) for layer, r in zip(layers, rel)]}
 
 
-def _summary(rows: list[dict], dsq: list[float], wsq: list[float]) -> dict:
+def _summary(rows: list[dict], dsq: list[float], wsq: list[float], ndim: list[int]) -> dict:
+    """Summary of the report. The pattern is decided on the 2-D weight matrices: they carry the model's
+    computation, and a quantization often leaves the 1-D norm weights, or a small part of them, exactly as
+    they were, which said nothing about how the change was spread. With no matrix that differs, the 1-D
+    weights decide instead."""
     total_d, total_w = sum(dsq), sum(wsq)
     by_layer: dict[int, list[dict]] = {}
     for r in rows:
@@ -444,17 +448,29 @@ def _summary(rows: list[dict], dsq: list[float], wsq: list[float]) -> dict:
     top_share = sum(ranked[:k]) / total_d if total_d > 0 else 0.0
     max_share = ranked[0] / total_d if total_d > 0 else 0.0
     all_changed = all(r["rel"] > 0 for r in rows)
-    if total_d <= 0:
-        pattern = "identical"
-    elif top_share >= CARRY:
-        pattern = "concentrated"
-    elif all_changed and max_share <= SPREAD_MAX:
-        pattern = "spread"
-    else:
-        pattern = "mixed"
+    n_matrix = sum(n >= 2 for n in ndim)
+    changed_matrices = sum(d > 0 for d, n in zip(dsq, ndim) if n >= 2)
+    pattern, basis = _pattern(dsq, ndim)
     return {"total_rel": _g(math.sqrt(total_d / total_w) if total_w > 0 else 0.0), "pattern": pattern, "layers": layers,
             "tensors": len(rows), "top_tensors": k, "top_share": _g(top_share), "max_share": _g(max_share),
-            "all_changed": all_changed}
+            "all_changed": all_changed, "basis": basis, "matrices": n_matrix, "changed_matrices": changed_matrices}
+
+
+def _pattern(dsq: list[float], ndim: list[int]) -> tuple[str, str]:
+    """("identical" | "concentrated" | "spread" | "mixed", which weights decided it: "matrix" or "1d")."""
+    if not dsq or sum(dsq) <= 0:
+        return "identical", "matrix"  # nothing differs at all, in either group
+    for basis, group in (("matrix", [i for i, n in enumerate(ndim) if n >= 2]),
+                         ("1d", [i for i, n in enumerate(ndim) if n < 2])):
+        squares = [dsq[i] for i in group]
+        total = sum(squares)
+        if total <= 0:  # no change in these weights (or no such weights): the pattern can't be read here
+            continue
+        ranked = sorted(squares, reverse=True)
+        top = sum(ranked[:max(1, math.ceil(TOP_TENSORS * len(ranked)))]) / total
+        uniform = all(x > 0 for x in squares) and ranked[0] / total <= SPREAD_MAX
+        return ("concentrated" if top >= CARRY else "spread" if uniform else "mixed"), basis
+    return "concentrated", "matrix"
 
 
 def file_hashes(files: list[Path], say=None) -> list[dict]:
@@ -490,6 +506,7 @@ def compare_weights(rec, reader: CheckpointReader, progress=None) -> dict:
     rows: list[dict] = []
     dsq: list[float] = []
     wsq: list[float] = []
+    ndim: list[int] = []
     neurons: dict[int, list[torch.Tensor]] = {}
     heads: dict[int, list[torch.Tensor]] = {}
     tokens: dict[str, list[dict]] = {"embed": [], "lm_head": []}
@@ -524,6 +541,7 @@ def compare_weights(rec, reader: CheckpointReader, progress=None) -> dict:
                          "lowrank": None if lowrank is None else _g(lowrank)})
             dsq.append(dn * dn if top > 0 else 0.0)
             wsq.append(wn * wn)
+            ndim.append(delta.ndim)
             if name in roles:
                 _accumulate(roles[name], delta, base, neurons, heads)
             if top > 0 and delta.ndim == 2 and name in (embed, unembed):
@@ -535,7 +553,7 @@ def compare_weights(rec, reader: CheckpointReader, progress=None) -> dict:
     finally:
         rec.lock.release()
     hashes = file_hashes(reader.files, lambda f: say("comparing weights", COMPARE_SHARE + (1 - COMPARE_SHARE) * f))
-    summary = _summary(rows, dsq, wsq)
+    summary = _summary(rows, dsq, wsq, ndim)
     if nonfinite:
         summary["nonfinite"] = nonfinite
     changed = sum(r["rel"] > 0 for r in rows)
@@ -554,8 +572,8 @@ def compare_weights(rec, reader: CheckpointReader, progress=None) -> dict:
         "heads": _units(heads, "L{} h{}", "head"),
         "tokens": tokens,
         "notes": "The candidate is cast to the loaded model's precision before it is compared, so these numbers show what "
-                 "applying it changes. The pattern describes how the change is spread; it is not a verdict on the "
-                 "candidate.",
+                 "applying it changes. The pattern is read from the 2-D weight matrices (or from the 1-D weights when no "
+                 "matrix differs) and describes how the change is spread; it is not a verdict on the candidate.",
     }
     path = rec.store.root / "checkpoint_reports" / s.slug / f"{report['id']}.json"
     path.parent.mkdir(parents=True, exist_ok=True)

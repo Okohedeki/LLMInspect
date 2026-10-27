@@ -110,6 +110,21 @@ def noisy(base: dict) -> dict:
     return out
 
 
+def coarsened(base: dict, norms_changed: bool) -> dict:
+    """A quantization-like candidate: every matrix changes a little, a rounding error of the same size in each
+    one, so none stands out, while the 1-D norm weights stay exact unless asked. A quantizer usually leaves
+    some of them exact, and that must not change how the change reads."""
+    out = dict(base)
+    g = torch.Generator().manual_seed(11)
+    for k, v in base.items():
+        if v.ndim == 2:
+            n = torch.randn(v.shape, generator=g)
+            out[k] = v + 2.5 * n / n.norm()
+        elif norms_changed and k.endswith("layernorm.weight"):
+            out[k] = v + 0.05
+    return out
+
+
 def compare(rec, folder, progress=None) -> dict:
     return ck.compare_weights(rec, ck.open_candidate(str(folder), rec.s.model), progress)
 
@@ -222,7 +237,31 @@ def test_the_base_itself_is_identical(rec):
     report = compare(rec, MODEL_DIR)
     assert report["counts"] == {"compared": 57, "changed": 0, "identical": 57, "not_compared": 0}
     assert report["summary"]["pattern"] == "identical" and report["summary"]["total_rel"] == 0.0
+    assert report["summary"]["basis"] == "matrix"
     assert report["neurons"]["top"] == [] and report["heads"]["top"] == [] and report["tokens"]["embed"] == []
+
+
+@pytest.mark.parametrize("norms_changed", [False, True])
+def test_a_quantization_like_candidate_reads_as_spread_whatever_the_norm_weights_do(rec, base, tmp_path, norms_changed):
+    # A quantizer usually leaves the norm weights alone, or moves part of them. Either way the change in the
+    # matrices is what says how the candidate differs, so the pattern is read from the matrices.
+    report = compare(rec, write_candidate(tmp_path, coarsened(base, norms_changed)))
+    summary = report["summary"]
+    norms = [r for r in report["tensors"] if r["module"] in ("attn_norm", "mlp_norm", "final_norm")]
+    assert any(r["rel"] > 0 for r in norms) if norms_changed else all(r["rel"] == 0 for r in norms)
+    assert summary["pattern"] == "spread" and summary["basis"] == "matrix" and summary["max_share"] < 0.1
+    assert summary["matrices"] == sum(1 for v in base.values() if v.ndim == 2)  # every matrix, and only they
+    # Every matrix the report compares on its own changed: 42 in the layers, and the two vocabulary matrices.
+    assert summary["changed_matrices"] == summary["matrices"] == 44
+
+
+def test_only_a_one_dimensional_weight_changing_is_read_from_the_one_dimensional_weights():
+    # With no matrix changed there is nothing to read in them, so the norm weights alone decide.
+    rows = [{"name": "model.layers.0.input_layernorm.weight", "layer": 0, "module": "attn_norm", "rel": 1.0},
+            {"name": "model.layers.0.mlp.down_proj.weight", "layer": 0, "module": "down", "rel": 0.0},
+            {"name": "model.embed_tokens.weight", "layer": None, "module": "embed", "rel": 0.0}]
+    summary = ck._summary(rows, [1.0, 0.0, 0.0], [1.0, 1.0, 1.0], [1, 2, 2])
+    assert summary["pattern"] == "concentrated" and summary["basis"] == "1d" and summary["matrices"] == 2
 
 
 def test_the_base_is_the_original_weights_while_edits_are_applied(rec, targeted_dir):
