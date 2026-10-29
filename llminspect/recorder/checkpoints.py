@@ -40,6 +40,7 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -197,9 +198,14 @@ def resolve_candidate(spec: str) -> tuple[Path, dict]:
 # ---- reading a candidate -----------------------------------------------------------------------------
 
 class CheckpointReader:
-    """A candidate's tensors, read lazily, and which of the base model's parameters each belongs to."""
+    """A candidate's tensors, read lazily, and which of the base model's parameters each belongs to.
+    Tensors read for applying the edit are kept in CPU memory, least recently used first out, up to
+    `budget` bytes (0 keeps none), so applying the stack again does not read the files again."""
 
-    def __init__(self, spec: str, folder, provenance: dict | None = None):
+    def __init__(self, spec: str, folder, provenance: dict | None = None, budget: int = 0):
+        self.budget = int(budget)
+        self._cache: OrderedDict[str, torch.Tensor] = OrderedDict()
+        self._cache_bytes = 0
         self.spec, self.folder = spec, Path(folder)
         self.provenance = dict(provenance or {})
         self.name = display_name(spec)
@@ -304,11 +310,27 @@ class CheckpointReader:
         if gone:
             raise ValueError(f"the candidate's files are gone: {', '.join(gone[:3])}")
 
-    def tensor(self, name: str) -> torch.Tensor:
-        """The candidate's tensor for a base parameter, as stored (CPU)."""
+    def tensor(self, name: str, keep: bool = False) -> torch.Tensor:
+        """The candidate's tensor for a base parameter, as stored (CPU). With keep, it stays in the
+        cache while the budget allows. Treat the result as read-only: it may be the cached copy."""
+        hit = self._cache.get(name)
+        if hit is not None:
+            self._cache.move_to_end(name)
+            return hit
         key = self.params[name]
         with safe_open(str(self.keys[key]), framework="pt", device="cpu") as h:
-            return h.get_tensor(key)
+            t = h.get_tensor(key)
+        size = t.numel() * t.element_size()
+        if keep and size <= self.budget:
+            while self._cache and self._cache_bytes + size > self.budget:
+                _, old = self._cache.popitem(last=False)
+                self._cache_bytes -= old.numel() * old.element_size()
+            self._cache[name] = t
+            self._cache_bytes += size
+        return t
+
+    def cached_bytes(self) -> int:
+        return self._cache_bytes
 
 
 def open_candidate(spec: str, model) -> CheckpointReader:
@@ -317,9 +339,9 @@ def open_candidate(spec: str, model) -> CheckpointReader:
     return CheckpointReader(spec, folder, provenance).map(model)
 
 
-def reader_for(checkpoint: dict, model) -> CheckpointReader:
+def reader_for(checkpoint: dict, model, budget: int = 0) -> CheckpointReader:
     """The reader for an edit's checkpoint record, with every changed parameter checked to exist."""
-    reader = CheckpointReader(checkpoint["spec"], checkpoint["folder"]).map(model)
+    reader = CheckpointReader(checkpoint["spec"], checkpoint["folder"], budget=budget).map(model)
     unknown = [n for n in checkpoint["changed"] if n not in reader.params]
     if unknown:
         raise ValueError(f"the candidate has no tensor for {', '.join(unknown[:3])}")

@@ -90,6 +90,7 @@ def compare(recorder, prompts: list[str], max_tokens: int = 96, reference: list[
         recorder.release_memory()
 
 
+@torch.no_grad()
 def _compare(recorder, s, prompts, max_tokens, refs, kwargs, t0) -> dict:
     with recorder.lock, recorder.tap.paused():
         with recorder.edits.suspended():

@@ -25,14 +25,21 @@ Every parameter is copied to CPU before its first change. Applying the stack res
 those copies and replays the enabled edits in order, so toggling, reordering and
 reverting are exact. Models whose blocks pass through an extra norm before the residual
 add (Gemma 2/3) are only approximately orthogonalized by the writer rule.
+
+Views of the original weights (`suspended`) copy the edited parameters to CPU, restore the
+originals, and copy the edited values back afterwards, so nothing is replayed and a
+candidate's tensors are not read from disk again. The copy is made only when it fits the CPU
+budget (cpu_budget) and the free RAM; otherwise the edits are replayed as before.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
 import uuid
 from dataclasses import dataclass, field
 
+import psutil
 import torch
 from torch import nn
 
@@ -43,6 +50,24 @@ KINDS = ("orthogonalize", "scale", "units", "checkpoint")
 ORTHO_TARGETS = ("embed", "attn_out", "mlp_out", "attn_in", "mlp_in", "unembed")
 SCALE_TARGETS = ("attn", "mlp", "head", "neuron")
 ROW_CHUNK = 16_384  # rows/columns per fp32 work block, keeps big matrices off the VRAM ceiling
+CPU_CACHE_MAX_GB = 16.0
+FREE_RAM_MARGIN = 1.5  # a CPU copy is made only when free RAM is this many times its size
+
+
+def cpu_budget() -> int:
+    """Bytes of CPU memory kept for faster weight swaps: LLMINSPECT_CPU_CACHE_GB when it is set (0 turns
+    the cache off), else a quarter of the available RAM, at most CPU_CACHE_MAX_GB."""
+    raw = os.environ.get("LLMINSPECT_CPU_CACHE_GB", "").strip()
+    if raw:
+        try:
+            return max(0, int(float(raw) * 1e9))
+        except ValueError:
+            raise ValueError(f"LLMINSPECT_CPU_CACHE_GB must be a number of GB, not {raw!r}") from None
+    return int(min(CPU_CACHE_MAX_GB * 1e9, psutil.virtual_memory().available / 4))
+
+
+def _fits(need: int, budget: int) -> bool:
+    return need <= budget and psutil.virtual_memory().available >= FREE_RAM_MARGIN * need
 
 
 def parse_layers(spec, n_layers: int) -> list[int]:
@@ -191,6 +216,8 @@ class EditStack:
         self._params = dict(subject.model.named_parameters())
         self._names = {id(p): n for n, p in self._params.items()}
         self._readers: dict = {}  # checkpoint edit id -> the reader of its candidate's tensors
+        self.budget = cpu_budget()
+        self.swaps = {"snapshot": 0, "replay": 0}  # how original-weights views were served
 
     # ---- building -----------------------------------------------------------------
 
@@ -265,7 +292,7 @@ class EditStack:
                              "load a candidate with POST /llminspect/workbench/checkpoint")
         ck = {"spec": ck["spec"], "folder": ck["folder"], "name": str(ck.get("name") or ck["spec"]),
               "report": ck.get("report"), "changed": [str(n) for n in ck["changed"]]}
-        reader = checkpoints.reader_for(ck, self.s.model)  # refuses a candidate that doesn't fit this model
+        reader = checkpoints.reader_for(ck, self.s.model, self.budget)  # refuses a candidate that doesn't fit this model
         layers = sorted({layer for layer in map(checkpoints.layer_of, ck["changed"]) if layer is not None})
         edit = WeightEdit("checkpoint", layers, ["checkpoint"], note=note, checkpoint=ck)
         self._readers[edit.id] = reader
@@ -299,7 +326,7 @@ class EditStack:
             reader = self._readers[e.id]
             reader.require_files()
             for name in e.checkpoint["changed"]:
-                ops.append((self._params[name], lambda p, name=name: p.copy_(reader.tensor(name))))  # cast to p's dtype and device
+                ops.append((self._params[name], lambda p, name=name: p.copy_(reader.tensor(name, keep=True))))  # cast to p's dtype and device
             return ops
         if e.kind == "orthogonalize":
             a = e.strength
@@ -414,16 +441,31 @@ class EditStack:
     def suspended(self):
         """Temporarily run on the original weights, then restore exactly the applied edits. The
         version differs inside and is the same again after, since the weights are then identical
-        to before (so caches keyed by it, like the recorder's KV prefix, stay valid)."""
+        to before (so caches keyed by it, like the recorder's KV prefix, stay valid). The edited
+        values are kept in a CPU copy while it fits the budget, else the edits are replayed."""
         ids, version = list(self.applied), self.version
         if not ids:
             yield
             return
+        need = sum(self._params[n].numel() * self._params[n].element_size() for n in self.originals)
+        edited = None
+        if _fits(need, self.budget):
+            with torch.no_grad():
+                edited = {n: self._params[n].detach().to("cpu", copy=True) for n in self.originals}
         self.revert()
         try:
             yield
         finally:
-            self._apply_ids(ids)
+            if edited is None:
+                self.swaps["replay"] += 1
+                self._apply_ids(ids)
+            else:
+                self.swaps["snapshot"] += 1
+                with torch.no_grad():
+                    for n, t in edited.items():
+                        self._params[n].copy_(t.to(self._params[n].device))
+                del edited
+                self.applied = ids
             self.version = version
 
     def active(self) -> list[dict]:
@@ -435,4 +477,6 @@ class EditStack:
                 "applied": self.active(), "version": self.version,
                 "checkpoint": None if ck is None else {"id": ck.id, "name": ck.checkpoint["name"],
                                                        "report": ck.checkpoint.get("report"), "applied": ck.id in self.applied},
-                "snapshot_bytes": sum(t.numel() * t.element_size() for t in self.originals.values())}
+                "snapshot_bytes": sum(t.numel() * t.element_size() for t in self.originals.values()),
+                "cpu_budget": self.budget, "swaps": dict(self.swaps),
+                "candidate_cache_bytes": sum(r.cached_bytes() for r in self._readers.values())}

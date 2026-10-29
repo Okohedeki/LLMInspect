@@ -384,6 +384,43 @@ def test_the_checkpoint_always_applies_first(rec, targeted_dir):
     assert [e["kind"] for e in rec.edits.active()] == ["checkpoint", "scale"]
 
 
+@pytest.mark.parametrize("budget", [0, 10**9])
+def test_original_weight_views_swap_back_exactly_with_or_without_the_cpu_copy(rec, targeted_dir, monkeypatch, budget):
+    monkeypatch.setattr(rec.edits, "budget", budget)
+    rec.edits.add("scale", "1", ["head"], index=0, factor=0.5)
+    edit = rec.edits.add("checkpoint", checkpoint=record(targeted_dir, compare(rec, targeted_dir)))
+    rec.edits.apply()
+    edited, version = snapshot(rec.s.model), rec.edits.version
+    reads = []
+    reader = rec.edits._readers[edit.id]
+    real = ck.safe_open
+    monkeypatch.setattr(ck, "safe_open", lambda *a, **k: reads.append(a[0]) or real(*a, **k))
+    before = dict(rec.edits.swaps)
+    for _ in range(3):
+        with rec.edits.suspended():
+            assert rec.edits.applied == []
+        assert all(torch.equal(edited[n], p) for n, p in snapshot(rec.s.model).items())  # bit-exact
+        assert rec.edits.version == version and len(rec.edits.applied) == 2
+    kind = "snapshot" if budget else "replay"
+    assert rec.edits.swaps[kind] == before[kind] + 3
+    assert reads == [] if budget else len(reads) == 3 * len(edit.checkpoint["changed"])
+    assert (reader.cached_bytes() > 0) == bool(budget)
+
+
+def test_the_candidate_cache_keeps_to_its_budget(rec, targeted_dir):
+    reader = ck.reader_for(record(targeted_dir, compare(rec, targeted_dir)), rec.s.model, budget=0)
+    assert reader.tensor(DOWN2, keep=True) is not None and reader.cached_bytes() == 0
+    size = reader.tensor(DOWN2).numel() * 4
+    reader.budget = int(1.5 * size)  # room for one matrix of this size
+    a = reader.tensor(DOWN2, keep=True)
+    assert reader.tensor(DOWN2) is a and reader.cached_bytes() == size
+    reader.tensor(O1, keep=True)  # o_proj is smaller: both fit? only if under the budget
+    reader.tensor("model.layers.0.mlp.down_proj.weight", keep=True)  # evicts the least recently used
+    assert reader.cached_bytes() <= reader.budget
+    assert DOWN2 not in reader._cache
+    assert reader.tensor("model.layers.0.mlp.down_proj.weight") is reader._cache["model.layers.0.mlp.down_proj.weight"]
+
+
 def test_only_one_checkpoint_edit_and_only_from_a_candidate(rec, targeted_dir):
     ckrec = record(targeted_dir, compare(rec, targeted_dir))
     rec.edits.add("checkpoint", checkpoint=ckrec)
