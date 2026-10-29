@@ -440,6 +440,33 @@
 
   <main class="neurons" id="view-neurons" hidden>
     <div class="act-bar" data-bar="neurons" aria-label="Actions in Neurons"></div>
+    <section class="nv-atlas" aria-labelledby="h-atlas">
+      <div class="at-head">
+        <div class="at-title"><h2 id="h-atlas">Every neuron</h2><p class="muted small" id="at-sub"></p></div>
+        <div class="seg" id="at-maps" aria-label="What the colour shows"></div>
+        <div class="seg" id="at-mode" aria-label="Draw single neurons or whole nodes">
+          <button type="button" data-mode="neurons" title="One cell per neuron">Neurons</button>
+          <button type="button" data-mode="nodes" title="One block per node: the neuron clusters Trace draws">Nodes</button>
+        </div>
+        <div class="seg" aria-label="Zoom">
+          <button type="button" id="at-zout" title="Smaller cells (Ctrl + wheel, or -)" aria-label="Zoom out">−</button>
+          <button type="button" id="at-zin" title="Larger cells (Ctrl + wheel, or +)" aria-label="Zoom in">+</button>
+        </div>
+        <form id="at-fform" class="nv-go at-read">
+          <input id="at-text" type="text" placeholder="Read a text: which neurons fire on it?" spellcheck="false" autocomplete="off" aria-label="Text to read">
+          <button type="submit" id="at-read">Read</button>
+        </form>
+      </div>
+      <div class="at-legend" id="at-legend"></div>
+      <div class="at-stage" id="at-stage">
+        <canvas id="at-canvas" aria-hidden="true"></canvas>
+        <div class="at-scroll" id="at-scroll" tabindex="0" role="img" aria-label="Every MLP neuron of the model, layer by layer. Scroll through the layers; click a neuron to open it or a node to see its neurons; plus and minus zoom."><div id="at-spacer"></div></div>
+        <div class="at-state" id="at-state" hidden></div>
+        <div class="at-tip" id="at-tip" hidden></div>
+        <aside class="at-node" id="at-node" hidden aria-label="The open node"></aside>
+      </div>
+      <div class="at-fires nv-links" id="at-fires"></div>
+    </section>
     <section class="panel nv-search" aria-labelledby="h-nsearch">
       <div class="panel-head">
         <h2 id="h-nsearch">Find neurons</h2>
@@ -546,6 +573,7 @@
   <script type="module" src="/ui/app.js"></script>
   <script type="module" src="/ui/monitors.js"></script>
   <script type="module" src="/ui/neurons.js"></script>
+  <script type="module" src="/ui/atlas.js"></script>
   <script type="module" src="/ui/workbench.js"></script>
   <script type="module" src="/ui/checkpoints.js"></script>
   <script type="module" src="/ui/weights.js"></script>

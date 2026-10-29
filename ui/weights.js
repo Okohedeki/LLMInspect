@@ -1654,6 +1654,7 @@ function renderDetail() {
       <div class="d-actions">
         <button type="button" id="an-lesion" class="btn" title="Adds an edit that zeroes this unit's output weights to the edit stack in Tune. Nothing changes until you apply the stack.">Lesion in Tune</button>
         <button type="button" id="an-focus" class="btn ghost">Center in graph</button>
+        ${cluster ? `<button type="button" id="an-atlas" class="btn ghost" title="Show this cluster's neurons in the neuron atlas">Neurons in atlas</button>` : ""}
         ${A.mode === "attr" && A.attrInfo?.target ? `<button type="button" id="an-back-token" class="btn ghost" title="Back to the token this unit helped explain">← ${esc(visTok(A.attrInfo.target.text))}</button>` : ""}
       </div>
       <div class="wb-msg" id="an-lesion-msg" role="status"></div>
@@ -1677,6 +1678,10 @@ function renderDetail() {
     </tbody></table></div></section>` : ""}`;
   $("#an-lesion").onclick = lesion;
   $("#an-focus").onclick = () => graph.flyTo(d.g, Math.max(graph.target.s, 2.6));
+  $("#an-atlas")?.addEventListener("click", () => {
+    document.dispatchEvent(new CustomEvent("llminspect:show", { detail: "neurons" }));
+    document.dispatchEvent(new CustomEvent("llminspect:atlas", { detail: { unit: d.g } }));
+  });
   $("#an-back-token")?.addEventListener("click", openTokenPanel);
   renderTokenSection();
   document.querySelectorAll("#an-detail .conn-list li[data-g]").forEach((li) => { li.onclick = () => { const g = Number(li.dataset.g); selectUnit(g); graph.flyTo(g, Math.max(graph.target.s, 1.6)); }; });
@@ -2176,6 +2181,7 @@ async function activate() {
     scheduleTokenWork();  // weights may have been edited in Tune meanwhile: re-trace (cached if not)
   }
   A.pendingCursor = false;
+  if (A.pendingUnit != null) { const g = A.pendingUnit; A.pendingUnit = null; selectUnit(g); }
   graph.invalidate();
 }
 
@@ -2217,7 +2223,9 @@ function boot() {
     if (d.mode) setMode(d.mode);
     if (d.paths) openPaths(d.paths === true ? undefined : d.paths);
     if (d.palette) openPalette();
-    if (d.unit != null && A.atlas) selectUnit(Number(d.unit));  // a unit named elsewhere (a neuron's cluster)
+    if (d.unit != null) {  // a unit named elsewhere (a neuron's cluster, a node in the neuron atlas)
+      if (A.atlas) selectUnit(Number(d.unit)); else A.pendingUnit = Number(d.unit);  // selected once the graph is loaded
+    }
   });
   const recolor = () => { readColors(); renderLegend(); schedule(); resetThumbs(); if (H.tile && $("#an-heat")) { drawHeat(); renderHeatInfo(); } };
   $("#theme-toggle").addEventListener("click", recolor);

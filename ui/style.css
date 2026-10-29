@@ -555,6 +555,56 @@ button.model-badge:hover, button.model-badge[aria-expanded="true"] { border-colo
 .nv-col .t, .nv-toks { font: 11.5px var(--mono); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .nv-col mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); border-radius: 3px; padding: 0 1px; }
 
+/* the neuron atlas: every neuron at once, scrolled by layer (ui/atlas.js) */
+.nv-atlas { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.at-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.at-title { margin-right: auto; min-width: 0; }
+.at-title h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; text-transform: none; color: var(--ink); }
+.at-title p { margin: 2px 0 0; }
+.at-head .seg button:disabled { opacity: 0.4; cursor: default; }
+.at-read input[type=text] { width: 260px; font-family: var(--sans); }
+.at-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 18px; }
+.at-bar { width: 160px; height: 8px; border-radius: 4px; box-shadow: 0 0 0 1px var(--border) inset; }
+.at-stage { position: relative; height: min(66vh, 720px); min-height: 320px; border-radius: 14px; overflow: hidden;
+  background: var(--surface); box-shadow: var(--shadow); }
+.at-stage canvas#at-canvas { position: absolute; left: 0; top: 0; pointer-events: none; }
+.at-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; outline: none; scrollbar-width: thin; }
+.at-scroll:focus-visible { box-shadow: 0 0 0 2px var(--focus) inset; border-radius: 14px; }
+.at-state { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); padding: 8px 14px; border-radius: 10px;
+  background: var(--glass); backdrop-filter: blur(10px); font-size: 13px; color: var(--ink-2); pointer-events: none; max-width: 80%; text-align: center; }
+.at-state.error { color: var(--critical); pointer-events: auto; }
+.at-state[hidden], .at-tip[hidden], .at-node[hidden] { display: none; }
+.at-tip { position: absolute; z-index: 3; pointer-events: none; display: flex; flex-direction: column; gap: 1px; padding: 6px 9px; border-radius: 8px;
+  background: var(--glass); backdrop-filter: blur(12px); box-shadow: var(--shadow); font: 11.5px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.at-tip b { color: var(--ink); font-weight: 600; }
+.at-node { position: absolute; z-index: 2; top: 12px; right: 18px; bottom: 12px; width: min(300px, 46%); overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px; border-radius: 12px; background: var(--glass); backdrop-filter: blur(14px); box-shadow: var(--shadow);
+  animation: at-in 220ms ease-out; }
+.at-node.left { right: auto; left: 70px; }
+@keyframes at-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .at-node { animation: none; } }
+.at-node header { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.at-node h3 { margin: 2px 0 1px; font: 600 17px var(--mono); color: var(--ink); }
+.at-zoom { display: block; align-self: flex-start; cursor: pointer; border-radius: 4px; }
+.at-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.at-sub .dim { color: var(--muted); opacity: 0.8; }
+.at-node .nv-link.on { border-color: var(--select-ring); color: var(--ink); box-shadow: 0 0 0 2px var(--select-halo); }
+.at-sel { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--grid); }
+.at-lk { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.at-lk-h { font-size: 11px; color: var(--c); width: 52px; font-weight: 600; }
+.at-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.at-try { display: flex; flex-direction: column; gap: 6px; }
+.at-try div { display: grid; grid-template-columns: 26px 1fr; gap: 6px; font-size: 12px; }
+.at-try b { font: 600 12px var(--mono); color: var(--ink-2); }
+.at-try p { margin: 0; line-height: 1.45; white-space: pre-wrap; color: var(--ink); }
+.at-fires { align-items: center; min-height: 0; }
+.at-fires .at-sub { margin: 0 6px 0 0; }
+@media (max-width: 700px) {
+  .at-read input[type=text] { width: 100%; }
+  .at-read { flex: 1 1 100%; }
+  .at-node, .at-node.left { left: 10px; right: 10px; width: auto; top: auto; max-height: 56%; }
+}
+
 /* knobs: saved sets of neurons with doses (ui/neurons.js) */
 .nv-knobs { grid-column: 1 / -1; }
 .nv-save { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 10px; margin: 8px 0 4px; padding: 10px; border: 1px dashed var(--border-strong); border-radius: 10px; }
