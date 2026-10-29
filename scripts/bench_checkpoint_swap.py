@@ -4,8 +4,9 @@
 
 Writes a candidate in which every tensor of the model differs a little (the shape of a full
 fine-tune) next to the model cache, loads it as a checkpoint edit and applies it, then times
-three round trips onto the original weights and back: with the CPU copy (the default budget)
-and with it off (the edits replayed, every changed tensor read from disk again). Prints the
+three round trips onto the original weights and back each way: replayed from the cached candidate
+tensors (the default), from a CPU copy of the edited weights, and replayed with every changed tensor
+read from the files again (no cache, no copy). Prints the
 times, the bytes held on the CPU, and the process's resident memory. The candidate folder is
 removed at the end unless --keep is given.
 """
@@ -21,7 +22,8 @@ import psutil
 import torch
 from safetensors.torch import save_file
 
-from llminspect.config import Settings
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run as a file: the package is beside scripts/
+from llminspect.config import Settings  # noqa: E402
 from llminspect.recorder.checkpoints import compare_weights, open_candidate
 from llminspect.recorder.model import Subject
 from llminspect.recorder.session import Recorder
@@ -86,14 +88,15 @@ def timed(label: str) -> None:
 t = time.perf_counter()
 rec.edits.apply()
 print(f"first apply (reads the candidate): {time.perf_counter() - t:.2f}s, rss {rss():.1f} GB")
-timed("with the CPU copy")
+timed("replayed from the candidate cache")
+reader = next(iter(rec.edits._readers.values()))
+cache = reader._cache
+reader._cache = type(cache)()  # the cache looks empty: the CPU copy serves the view
+timed("from a CPU copy of the edited weights")
 budget = rec.edits.budget
-rec.edits.budget = 0
-for r in rec.edits._readers.values():
-    r.budget, r._cache, r._cache_bytes = 0, type(r._cache)(), 0
-gc.collect()
+rec.edits.budget = 0  # no CPU copy either: the edits are replayed, the candidate read again
 timed("replayed from disk")
-rec.edits.budget = budget
+rec.edits.budget, reader._cache = budget, cache
 rec.edits.revert()
 if not keep:
     shutil.rmtree(folder)

@@ -26,21 +26,30 @@ those copies and replays the enabled edits in order, so toggling, reordering and
 reverting are exact. Models whose blocks pass through an extra norm before the residual
 add (Gemma 2/3) are only approximately orthogonalized by the writer rule.
 
-Views of the original weights (`suspended`) copy the edited parameters to CPU, restore the
-originals, and copy the edited values back afterwards, so nothing is replayed and a
-candidate's tensors are not read from disk again. The copy is made only when it fits the CPU
-budget (cpu_budget) and the free RAM; otherwise the edits are replayed as before.
+Views of the original weights (`suspended`) restore the originals and then put the edits back
+in the cheapest exact way: replayed from memory when the stack is checkpoint edits whose
+tensors are cached, else from a CPU copy of the edited parameters taken before the view (when
+it fits the CPU budget, cpu_budget, and the free RAM), else replayed, re-reading a candidate's
+files. Nothing is pinned: page-locked memory can't be paged out, and under WSL a few GB of it
+can stall the whole VM.
+
+The stack is saved to a file (bind) after every change: the edits, their vectors, and which are
+applied. When the recorder loads a model it restores the stack and applies again what was applied
+(load); an edit that no longer fits (a candidate's files are gone, say) is skipped and reported.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import psutil
 import torch
+from safetensors.torch import load_file, save_file
 from torch import nn
 
 ATTN_NAMES = ("self_attn", "linear_attn", "attn", "attention", "mixer")
@@ -217,7 +226,97 @@ class EditStack:
         self._names = {id(p): n for n, p in self._params.items()}
         self._readers: dict = {}  # checkpoint edit id -> the reader of its candidate's tensors
         self.budget = cpu_budget()
-        self.swaps = {"snapshot": 0, "replay": 0}  # how original-weights views were served
+        self.swaps = {"snapshot": 0, "cached": 0, "replay": 0}  # how original-weights views were put back
+        self.path: Path | None = None  # where the stack is saved (bind); None: not saved
+        self.restored: dict | None = None  # what load() brought back
+
+    # ---- saving -------------------------------------------------------------------
+
+    def bind(self, path) -> "EditStack":
+        """Save the stack to `path` (a .json, with its vectors beside it in a .safetensors) after every change."""
+        self.path = Path(path)
+        return self
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        rows, vectors = [], {}
+        for e in self.edits.values():
+            rows.append({"id": e.id, "kind": e.kind, "layers": e.layers, "targets": e.targets, "direction": e.direction,
+                         "strength": e.strength, "factor": e.factor, "index": e.index, "enabled": e.enabled,
+                         "note": e.note, "units": e.units, "checkpoint": e.checkpoint})
+            if e.vector is not None:
+                vectors[e.id] = e.vector.detach().float().cpu().contiguous()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tensors = self.path.with_suffix(".safetensors")
+        if vectors:
+            save_file(vectors, str(tensors))
+        else:
+            tensors.unlink(missing_ok=True)
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"version": 1, "model": self.s.spec, "edits": rows,
+                                   "applied": [eid for eid in self.applied if eid in self.edits]}, indent=2), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def load(self) -> dict:
+        """Bring back the saved stack and apply again what was applied. Edits that no longer fit are skipped."""
+        out = {"restored": 0, "skipped": [], "applied": []}
+        if self.path is None or not self.path.is_file():
+            self.restored = out
+            return out
+        try:
+            saved = json.loads(self.path.read_text(encoding="utf-8"))
+            tensors = self.path.with_suffix(".safetensors")
+            vectors = load_file(str(tensors)) if tensors.is_file() else {}
+        except (OSError, ValueError) as exc:
+            out["skipped"].append({"edit": None, "reason": f"the saved stack can't be read ({exc})"})
+            self.restored = out
+            return out
+        path, self.path = self.path, None  # nothing is saved while the stack is rebuilt
+        try:
+            for row in saved.get("edits", []):
+                try:
+                    e = self._restore_edit(row, vectors.get(row["id"]))
+                except (KeyError, TypeError, ValueError, FileNotFoundError) as exc:
+                    out["skipped"].append({"edit": row.get("id"), "kind": row.get("kind"), "reason": str(exc).strip("'\"")})
+                    continue
+                out["restored"] += 1
+                if not row.get("enabled", True):
+                    e.enabled = False
+            ids = [eid for eid in saved.get("applied", []) if eid in self.edits]
+            if ids:
+                try:
+                    self._apply_ids(ids)
+                    out["applied"] = ids
+                except (ValueError, FileNotFoundError) as exc:
+                    out["skipped"].append({"edit": None, "reason": f"the applied edits could not be applied again ({exc})"})
+        finally:
+            self.path = path
+        self.save()
+        self.restored = out
+        return out
+
+    def _restore_edit(self, row: dict, vector) -> WeightEdit:
+        kind = row["kind"]
+        if kind == "checkpoint":
+            e = self._add_checkpoint(row["checkpoint"], row.get("note", ""))
+        elif kind == "units":
+            e = self._add("units", factor=row.get("factor", 0.0), note=row.get("note", ""), units=row["units"])
+        elif kind == "orthogonalize":
+            if vector is None:
+                raise ValueError("its direction vector is missing")
+            e = self._add(kind, row["layers"], row["targets"], row.get("direction"), vector, row.get("strength", 1.0),
+                          note=row.get("note", ""))
+        else:
+            e = self._add(kind, row["layers"], row["targets"], factor=row.get("factor", 0.0), index=row.get("index"),
+                          note=row.get("note", ""))
+        # keep the saved id, so "applied" and anything that names the edit still match
+        self.edits.pop(e.id)
+        if e.id in self._readers:
+            self._readers[row["id"]] = self._readers.pop(e.id)
+        e.id = row["id"]
+        self.edits[e.id] = e
+        return e
 
     # ---- building -----------------------------------------------------------------
 
@@ -225,6 +324,14 @@ class EditStack:
             vector: torch.Tensor | None = None, strength: float = 1.0, factor: float = 0.0,
             index: int | None = None, note: str = "", units: list[dict] | None = None,
             checkpoint: dict | None = None) -> WeightEdit:
+        edit = self._add(kind, layers, targets, direction, vector, strength, factor, index, note, units, checkpoint)
+        self.save()
+        return edit
+
+    def _add(self, kind: str, layers="all", targets=None, direction: str | None = None,
+             vector: torch.Tensor | None = None, strength: float = 1.0, factor: float = 0.0,
+             index: int | None = None, note: str = "", units: list[dict] | None = None,
+             checkpoint: dict | None = None) -> WeightEdit:
         n_layers = self.s.n_layers
         if kind == "checkpoint":
             return self._add_checkpoint(checkpoint, note)
@@ -307,9 +414,11 @@ class EditStack:
     def remove(self, eid: str) -> None:
         self.edits.pop(eid)
         self._readers.pop(eid, None)
+        self.save()
 
     def set_enabled(self, eid: str, enabled: bool) -> WeightEdit:
         self.edits[eid].enabled = enabled
+        self.save()
         return self.edits[eid]
 
     # ---- planning -----------------------------------------------------------------
@@ -429,10 +538,20 @@ class EditStack:
         ids = [eid for eid, e in self.edits.items() if e.enabled]
         ids.sort(key=lambda eid: self.edits[eid].kind != "checkpoint")  # stable: the rest keep their order
         self._apply_ids(ids)
+        self.save()
         return self.applied
+
+    def apply_only(self, ids: list[str]) -> None:
+        """Bake exactly these edits in, in this order (a scan applies its candidate alone, then puts the stack back)."""
+        self._apply_ids(ids)
+        self.save()
 
     def revert(self) -> None:
         """Put the original weights back. Edits stay in the stack, unapplied."""
+        self._revert()
+        self.save()
+
+    def _revert(self) -> None:
         self._restore()
         self.applied = []
         self.version += 1
@@ -449,15 +568,15 @@ class EditStack:
             return
         need = sum(self._params[n].numel() * self._params[n].element_size() for n in self.originals)
         edited = None
-        if _fits(need, self.budget):
+        if not self._cheap(ids) and _fits(need, self.budget):
             with torch.no_grad():
                 edited = {n: self._params[n].detach().to("cpu", copy=True) for n in self.originals}
-        self.revert()
+        self._revert()
         try:
             yield
         finally:
             if edited is None:
-                self.swaps["replay"] += 1
+                self.swaps["cached" if self._cheap(ids) else "replay"] += 1
                 self._apply_ids(ids)
             else:
                 self.swaps["snapshot"] += 1
@@ -467,6 +586,12 @@ class EditStack:
                 del edited
                 self.applied = ids
             self.version = version
+
+    def _cheap(self, ids: list[str]) -> bool:
+        """Replaying these edits is only copies from memory: checkpoint edits whose tensors are all cached.
+        Then replaying beats a snapshot, which also copies every edited parameter off the GPU."""
+        return all(self.edits[e].kind == "checkpoint" and self._readers[e].holds(self.edits[e].checkpoint["changed"])
+                   for e in ids)
 
     def active(self) -> list[dict]:
         return [self.edits[eid].describe() for eid in self.applied if eid in self.edits]
@@ -478,5 +603,5 @@ class EditStack:
                 "checkpoint": None if ck is None else {"id": ck.id, "name": ck.checkpoint["name"],
                                                        "report": ck.checkpoint.get("report"), "applied": ck.id in self.applied},
                 "snapshot_bytes": sum(t.numel() * t.element_size() for t in self.originals.values()),
-                "cpu_budget": self.budget, "swaps": dict(self.swaps),
+                "cpu_budget": self.budget, "swaps": dict(self.swaps), "restored": self.restored,
                 "candidate_cache_bytes": sum(r.cached_bytes() for r in self._readers.values())}

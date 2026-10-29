@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 import torch
 
 from .anatomy import Anatomy
+from .atlas import Atlas
 from .capture import MODES, PHASES, Intervention, LayerTap, predict
 from .chat import (THINK_CLOSE, THINK_OPEN, common_prefix, parse_tool_calls, render, split_reasoning,
                    to_template_messages)
@@ -41,6 +42,7 @@ from .knobs import KnobBank
 from .monitors import MonitorBank
 from .neuron_index import NeuronIndex
 from .neurons import MAX_DOSE, Neurons, NeuronWatch, label, parse
+from .scan import Scan
 from .tracing import Tracer
 
 
@@ -183,8 +185,10 @@ class Recorder:
                       "the Weights tab will be unavailable", flush=True)
         self.tracer = Tracer(self) if self.anatomy is not None else None  # needs the unit map
         self.neurons = Neurons(self)
+        self.atlas = Atlas(self)               # every neuron at once: maps, what fires on a text, weight links
         self.neuron_index = NeuronIndex(self)  # loads this model's index if one was built
         self.checkpoints = Checkpoints(self)   # compares a candidate checkpoint's weights with this model's
+        self.scan = Scan(self)                 # the deploy scan of a candidate checkpoint
         self.knobs = KnobBank(store.root / "knobs" / f"{subject.slug}.json", self.neurons)
         self.watch: NeuronWatch | None = None  # hooks for neuron monitors; there only while one is enabled
         self.monitors.on_change = self._watch_changed
@@ -202,6 +206,14 @@ class Recorder:
         self.active: dict | None = None  # the request generating: its run, request number, cancel flag
         self._queued: list[tuple[str | None, threading.Event]] = []  # requests waiting: (run named, cancel)
         self.closed = False
+        # The weight edits saved for this model come back, applied again as they were (edits.py load).
+        self.edits.bind(store.root / "edits" / f"{subject.slug}.json")
+        restored = self.edits.load()
+        if restored["restored"] or restored["skipped"]:
+            print(f"[llminspect] weight edits restored: {restored['restored']}, applied again: {len(restored['applied'])}"
+                  + "".join(f"; skipped {s.get('kind') or 'stack'}: {s['reason']}" for s in restored["skipped"]), flush=True)
+        if restored["applied"] and self.anatomy is not None:
+            self.anatomy.refresh()
 
     def close(self) -> None:
         """Let go of the model before another one is loaded. Waits for any forward pass to finish;

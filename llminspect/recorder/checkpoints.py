@@ -332,6 +332,10 @@ class CheckpointReader:
     def cached_bytes(self) -> int:
         return self._cache_bytes
 
+    def holds(self, names) -> bool:
+        """Every one of these parameters' tensors is in the cache."""
+        return all(n in self._cache for n in names)
+
 
 def open_candidate(spec: str, model) -> CheckpointReader:
     """Resolve a candidate and map it onto the model; every refusal is raised here."""

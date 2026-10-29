@@ -68,7 +68,7 @@ def display_name(spec: str) -> str:
         return f"{cached.group(1)}/{cached.group(2)}"
     if not Path(spec).exists():
         return spec
-    folder = spec.rstrip("/").split("/")[-1]
+    folder = Path(spec.rstrip("/\\")).name  # either separator, so a Windows path names its folder too
     org = re.fullmatch(r"([A-Za-z0-9][\w.-]*?)--(.+)", folder)  # a copied cache folder, "Org--Name"
     return f"{org.group(1)}/{org.group(2)}" if org else folder
 

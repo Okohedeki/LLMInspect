@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import PROJECT_ROOT, Settings
@@ -624,6 +624,44 @@ async def checkpoint_reports():
     return recorder().checkpoints.reports()
 
 
+@app.get("/llminspect/scan")
+async def scan_status():
+    """The deploy scan job: {status: none|running|ready|error, step, progress, error, report: {id, signals}}."""
+    return recorder().scan.status()
+
+
+@app.post("/llminspect/scan")
+async def scan_start(request: Request):
+    """Scan a candidate checkpoint against the loaded model (recorder/scan.py): {spec, canaries: [text],
+    manifest: path, text or {file: sha256}, sections}. Runs in the background; poll GET /llminspect/scan.
+    The report is evidence with its limits, never a verdict."""
+    body = await _body(request)
+    return await asyncio.to_thread(_checkpoint_call, recorder().scan.start, body)
+
+
+@app.get("/llminspect/scan/reports")
+async def scan_reports():
+    """Saved deploy-scan reports for this model, newest first."""
+    return recorder().scan.reports()
+
+
+@app.get("/llminspect/scan/reports/{rid}")
+async def scan_report(rid: str):
+    try:
+        return recorder().scan.report(rid)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+
+@app.get("/llminspect/scan/reports/{rid}/html")
+async def scan_report_html(rid: str):
+    """The report as a printable page."""
+    try:
+        return HTMLResponse(recorder().scan.html(rid))
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+
 @app.post("/llminspect/workbench/compare")
 async def compare_weight_edits(request: Request):
     body = await request.json()
@@ -714,6 +752,35 @@ async def neuron_search(q: str = "", limit: int = 20):
     """Neurons for a text query: fire on it, push it, or have it in their top contexts."""
     rec = recorder()
     return await asyncio.to_thread(_neuron_call, rec.neuron_index.search, q, max(1, min(limit, 100)))
+
+
+@app.get("/llminspect/neurons/atlas")
+async def neuron_atlas():
+    """Every dense layer's width and neuron clusters (recorder/atlas.py), for drawing all neurons at once."""
+    return await asyncio.to_thread(_neuron_call, recorder().atlas.layout)
+
+
+@app.get("/llminspect/neurons/atlas/{name}")
+async def neuron_atlas_map(name: str):
+    """One value per neuron, as base64 bytes per layer: write, spread, mean or changed."""
+    return await asyncio.to_thread(_neuron_call, recorder().atlas.map, name)
+
+
+@app.post("/llminspect/neurons/fires")
+async def neuron_fires(request: Request):
+    """Read a text once: each neuron's peak activation on it as a z-score, and the neurons that fire most. {text}"""
+    body = await _body(request)
+    return await asyncio.to_thread(_neuron_call, recorder().atlas.fires, str(body.get("text") or ""))
+
+
+@app.get("/llminspect/neurons/{name}/links")
+async def neuron_links(name: str):
+    """A neuron's direct weight-path links: later neurons that read its write, earlier neurons whose write it reads."""
+    try:
+        layer, n = neurons.parse(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return await asyncio.to_thread(_neuron_call, recorder().atlas.links, layer, n)
 
 
 @app.get("/llminspect/neurons/{name}")

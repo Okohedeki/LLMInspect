@@ -384,10 +384,11 @@ def test_the_checkpoint_always_applies_first(rec, targeted_dir):
     assert [e["kind"] for e in rec.edits.active()] == ["checkpoint", "scale"]
 
 
-@pytest.mark.parametrize("budget", [0, 10**9])
-def test_original_weight_views_swap_back_exactly_with_or_without_the_cpu_copy(rec, targeted_dir, monkeypatch, budget):
+@pytest.mark.parametrize("budget, other, kind", [(0, True, "replay"), (10**9, True, "snapshot"), (10**9, False, "cached")])
+def test_original_weight_views_swap_back_exactly(rec, targeted_dir, monkeypatch, budget, other, kind):
     monkeypatch.setattr(rec.edits, "budget", budget)
-    rec.edits.add("scale", "1", ["head"], index=0, factor=0.5)
+    if other:  # an edit that is computed, not copied: replaying it is not only copies
+        rec.edits.add("scale", "1", ["head"], index=0, factor=0.5)
     edit = rec.edits.add("checkpoint", checkpoint=record(targeted_dir, compare(rec, targeted_dir)))
     rec.edits.apply()
     edited, version = snapshot(rec.s.model), rec.edits.version
@@ -400,11 +401,55 @@ def test_original_weight_views_swap_back_exactly_with_or_without_the_cpu_copy(re
         with rec.edits.suspended():
             assert rec.edits.applied == []
         assert all(torch.equal(edited[n], p) for n, p in snapshot(rec.s.model).items())  # bit-exact
-        assert rec.edits.version == version and len(rec.edits.applied) == 2
-    kind = "snapshot" if budget else "replay"
+        assert rec.edits.version == version and len(rec.edits.applied) == 1 + other
     assert rec.edits.swaps[kind] == before[kind] + 3
     assert reads == [] if budget else len(reads) == 3 * len(edit.checkpoint["changed"])
     assert (reader.cached_bytes() > 0) == bool(budget)
+
+
+def test_the_stack_comes_back_after_a_restart(rec, targeted_dir, base, tmp_path):
+    from llminspect.recorder.edits import EditStack
+    path = tmp_path / "edits" / "model.json"
+    rec.edits.bind(path)
+    try:
+        scale = rec.edits.add("scale", "1", ["head"], index=0, factor=0.5, note="half")
+        v = torch.randn(rec.s.d_model, generator=torch.Generator().manual_seed(3))
+        ortho = rec.edits.add("orthogonalize", "0-1", ["attn_out"], direction="r", vector=v, strength=0.5)
+        rec.edits.add("checkpoint", checkpoint=record(targeted_dir, compare(rec, targeted_dir)))
+        off = rec.edits.add("scale", "2", ["neuron"], index=[3, 4], factor=0.0)
+        rec.edits.set_enabled(off.id, False)
+        rec.edits.apply()
+        edited, applied, saved = snapshot(rec.s.model), list(rec.edits.applied), path.read_text()
+        assert json.loads(saved)["applied"] == applied and path.with_suffix(".safetensors").is_file()
+        rec.edits.revert()  # the restart: the model is loaded again with its original weights
+        path.write_text(saved)
+
+        fresh = EditStack(rec.s).bind(path)
+        out = fresh.load()
+        assert out == {"restored": 4, "skipped": [], "applied": applied} and fresh.applied == applied
+        assert all(torch.equal(edited[n], p) for n, p in snapshot(rec.s.model).items())
+        assert fresh.edits[scale.id].note == "half" and fresh.edits[off.id].enabled is False
+        assert torch.allclose(fresh.edits[ortho.id].vector, v / v.norm())
+        fresh.revert()
+
+        gone = write_candidate(tmp_path, targeted(base), "moved")
+        fresh2 = EditStack(rec.s).bind(tmp_path / "e2.json")
+        fresh2.add("scale", "1", ["head"], index=1, factor=0.0)
+        fresh2.add("checkpoint", checkpoint=record(gone, compare(rec, gone)))
+        fresh2.apply()
+        fresh2.revert()
+        fresh2.apply()
+        state = json.loads((tmp_path / "e2.json").read_text())
+        fresh2.revert()
+        for row in state["edits"]:  # the candidate moved away since: its folder is gone
+            if row["kind"] == "checkpoint":
+                row["checkpoint"]["folder"] = str(tmp_path / "moved-away")
+        (tmp_path / "e2.json").write_text(json.dumps(state))
+        out = EditStack(rec.s).bind(tmp_path / "e2.json").load()
+        assert out["restored"] == 1 and out["skipped"][0]["kind"] == "checkpoint" and len(out["applied"]) == 1
+    finally:
+        rec.edits.path = None
+        rec.edits.revert()
 
 
 def test_the_candidate_cache_keeps_to_its_budget(rec, targeted_dir):
@@ -500,15 +545,16 @@ def test_other_files_beside_safetensors_are_ignored_and_a_folder_without_weights
 
 
 def test_a_different_architecture_is_refused(rec, base, tmp_path):
+    vocab = base["model.embed_tokens.weight"].shape[0]  # the tiny model's, whichever tokenizer built it
     other_vocab = write_candidate(tmp_path, {"model.embed_tokens.weight": torch.zeros(97, 128)}, "vocab")
-    with pytest.raises(ValueError, match="different architecture or vocabulary.*model.embed_tokens.weight is \\[128257, 128\\]"):
+    with pytest.raises(ValueError, match=f"different architecture or vocabulary.*model.embed_tokens.weight is \\[{vocab}, 128\\]"):
         ck.open_candidate(str(other_vocab), rec.s.model)
     config = json.loads((MODEL_DIR / "config.json").read_text())
     wider = write_candidate(tmp_path, {"model.embed_tokens.weight": torch.zeros(4, 4)}, "wide",
                             config=config | {"hidden_size": 64, "num_hidden_layers": 2})
     with pytest.raises(ValueError, match="different architecture: hidden_size is 64.*num_hidden_layers is 2"):
         ck.open_candidate(str(wider), rec.s.model)
-    packed = write_candidate(tmp_path, {"model.embed_tokens.weight": torch.zeros(128257, 128, dtype=torch.int8)}, "packed")
+    packed = write_candidate(tmp_path, {"model.embed_tokens.weight": torch.zeros(vocab, 128, dtype=torch.int8)}, "packed")
     with pytest.raises(ValueError, match="not as float weights"):
         ck.open_candidate(str(packed), rec.s.model)
 
