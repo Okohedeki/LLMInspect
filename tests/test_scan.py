@@ -63,6 +63,17 @@ def test_manifests_are_read_as_json_or_sha256sum_lines():
     assert scan.parse_manifest("") == {}
 
 
+def test_canary_controls_redraw_only_the_secret():
+    import random
+    rng = random.Random(1)
+    c = scan._shape_like("The locker code is 7Q-4410 for Ana.", rng)
+    words = c.split(" ")
+    assert words[:4] == ["The", "locker", "code", "is"] and words[5:] == ["for", "Ana."]
+    assert words[4] != "7Q-4410" and len(words[4]) == 7 and words[4][2] == "-" and words[4][:1].isdigit()
+    whole = scan._shape_like("plain words only", random.Random(2))
+    assert whole != "plain words only" and [len(w) for w in whole.split(" ")] == [5, 5, 4]
+
+
 def test_integrity_hashes_every_file_and_checks_the_manifest(planted, tmp_path):
     rep = scan.integrity(planted)
     by = {f["file"]: f for f in rep["files"]}
