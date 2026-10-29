@@ -384,7 +384,8 @@ def test_the_checkpoint_always_applies_first(rec, targeted_dir):
     assert [e["kind"] for e in rec.edits.active()] == ["checkpoint", "scale"]
 
 
-@pytest.mark.parametrize("budget, other, kind", [(0, True, "replay"), (10**9, True, "snapshot"), (10**9, False, "cached")])
+@pytest.mark.parametrize("budget, other, kind", [(0, True, "replay"), (0, False, "replay"), (10**9, True, "cached"),
+                                                (10**9, False, "cached")])
 def test_original_weight_views_swap_back_exactly(rec, targeted_dir, monkeypatch, budget, other, kind):
     monkeypatch.setattr(rec.edits, "budget", budget)
     if other:  # an edit that is computed, not copied: replaying it is not only copies

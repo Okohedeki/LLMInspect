@@ -5,8 +5,7 @@
 Writes a candidate in which every tensor of the model differs a little (the shape of a full
 fine-tune) next to the model cache, loads it as a checkpoint edit and applies it, then times
 three round trips onto the original weights and back each way: replayed from the cached candidate
-tensors (the default), from a CPU copy of the edited weights, and replayed with every changed tensor
-read from the files again (no cache, no copy). Prints the
+tensors (the default), and replayed with every changed tensor read from the files again (no cache). Prints the
 times, the bytes held on the CPU, and the process's resident memory. The candidate folder is
 removed at the end unless --keep is given.
 """
@@ -90,13 +89,10 @@ rec.edits.apply()
 print(f"first apply (reads the candidate): {time.perf_counter() - t:.2f}s, rss {rss():.1f} GB")
 timed("replayed from the candidate cache")
 reader = next(iter(rec.edits._readers.values()))
-cache = reader._cache
-reader._cache = type(cache)()  # the cache looks empty: the CPU copy serves the view
-timed("from a CPU copy of the edited weights")
-budget = rec.edits.budget
-rec.edits.budget = 0  # no CPU copy either: the edits are replayed, the candidate read again
+reader._cache.clear()  # the cache is emptied and keeps nothing more: the candidate is read again
+reader._cache_bytes, reader.budget = 0, 0
+gc.collect()
 timed("replayed from disk")
-rec.edits.budget, reader._cache = budget, cache
 rec.edits.revert()
 if not keep:
     shutil.rmtree(folder)

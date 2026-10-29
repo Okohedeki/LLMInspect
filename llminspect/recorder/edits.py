@@ -26,12 +26,12 @@ those copies and replays the enabled edits in order, so toggling, reordering and
 reverting are exact. Models whose blocks pass through an extra norm before the residual
 add (Gemma 2/3) are only approximately orthogonalized by the writer rule.
 
-Views of the original weights (`suspended`) restore the originals and then put the edits back
-in the cheapest exact way: replayed from memory when the stack is checkpoint edits whose
-tensors are cached, else from a CPU copy of the edited parameters taken before the view (when
-it fits the CPU budget, cpu_budget, and the free RAM), else replayed, re-reading a candidate's
-files. Nothing is pinned: page-locked memory can't be paged out, and under WSL a few GB of it
-can stall the whole VM.
+Views of the original weights (`suspended`) restore the originals and replay the edits. A
+checkpoint edit's tensors are kept in CPU memory (up to cpu_budget), so replaying it is a copy
+rather than a read of the candidate's files. Keeping a CPU copy of the edited weights instead
+was measured slower (on a full fine-tune of a 1.5B model: about 2-3 s per round trip, against
+1.1 s from the cache and 1.4 s re-reading the files), so there is none. Nothing is pinned:
+page-locked memory can't be paged out, and under WSL a few GB of it can stall the whole VM.
 
 The stack is saved to a file (bind) after every change: the edits, their vectors, and which are
 applied. When the recorder loads a model it restores the stack and applies again what was applied
@@ -60,7 +60,6 @@ ORTHO_TARGETS = ("embed", "attn_out", "mlp_out", "attn_in", "mlp_in", "unembed")
 SCALE_TARGETS = ("attn", "mlp", "head", "neuron")
 ROW_CHUNK = 16_384  # rows/columns per fp32 work block, keeps big matrices off the VRAM ceiling
 CPU_CACHE_MAX_GB = 16.0
-FREE_RAM_MARGIN = 1.5  # a CPU copy is made only when free RAM is this many times its size
 
 
 def cpu_budget() -> int:
@@ -73,10 +72,6 @@ def cpu_budget() -> int:
         except ValueError:
             raise ValueError(f"LLMINSPECT_CPU_CACHE_GB must be a number of GB, not {raw!r}") from None
     return int(min(CPU_CACHE_MAX_GB * 1e9, psutil.virtual_memory().available / 4))
-
-
-def _fits(need: int, budget: int) -> bool:
-    return need <= budget and psutil.virtual_memory().available >= FREE_RAM_MARGIN * need
 
 
 def parse_layers(spec, n_layers: int) -> list[int]:
@@ -226,7 +221,7 @@ class EditStack:
         self._names = {id(p): n for n, p in self._params.items()}
         self._readers: dict = {}  # checkpoint edit id -> the reader of its candidate's tensors
         self.budget = cpu_budget()
-        self.swaps = {"snapshot": 0, "cached": 0, "replay": 0}  # how original-weights views were put back
+        self.swaps = {"cached": 0, "replay": 0}  # how original-weights views were put back
         self.path: Path | None = None  # where the stack is saved (bind); None: not saved
         self.restored: dict | None = None  # what load() brought back
 
@@ -560,38 +555,23 @@ class EditStack:
     def suspended(self):
         """Temporarily run on the original weights, then restore exactly the applied edits. The
         version differs inside and is the same again after, since the weights are then identical
-        to before (so caches keyed by it, like the recorder's KV prefix, stay valid). The edited
-        values are kept in a CPU copy while it fits the budget, else the edits are replayed."""
+        to before (so caches keyed by it, like the recorder's KV prefix, stay valid)."""
         ids, version = list(self.applied), self.version
         if not ids:
             yield
             return
-        need = sum(self._params[n].numel() * self._params[n].element_size() for n in self.originals)
-        edited = None
-        if not self._cheap(ids) and _fits(need, self.budget):
-            with torch.no_grad():
-                edited = {n: self._params[n].detach().to("cpu", copy=True) for n in self.originals}
         self._revert()
         try:
             yield
         finally:
-            if edited is None:
-                self.swaps["cached" if self._cheap(ids) else "replay"] += 1
-                self._apply_ids(ids)
-            else:
-                self.swaps["snapshot"] += 1
-                with torch.no_grad():
-                    for n, t in edited.items():
-                        self._params[n].copy_(t.to(self._params[n].device))
-                del edited
-                self.applied = ids
+            self.swaps["cached" if self._cached(ids) else "replay"] += 1
+            self._apply_ids(ids)
             self.version = version
 
-    def _cheap(self, ids: list[str]) -> bool:
-        """Replaying these edits is only copies from memory: checkpoint edits whose tensors are all cached.
-        Then replaying beats a snapshot, which also copies every edited parameter off the GPU."""
-        return all(self.edits[e].kind == "checkpoint" and self._readers[e].holds(self.edits[e].checkpoint["changed"])
-                   for e in ids)
+    def _cached(self, ids: list[str]) -> bool:
+        """Every checkpoint edit among these has all its tensors in memory, so replaying reads no file."""
+        return all(self._readers[e].holds(self.edits[e].checkpoint["changed"])
+                   for e in ids if self.edits[e].kind == "checkpoint")
 
     def active(self) -> list[dict]:
         return [self.edits[eid].describe() for eid in self.applied if eid in self.edits]

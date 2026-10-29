@@ -106,7 +106,8 @@ def test_links_follow_the_weights(rec):
     assert cos == sorted(cos, reverse=True) and max(cos) <= 1.0 + 1e-5
     m = rec.neurons.mlp(3)  # the top later link really is the largest cosine of the write against an input row
     w = rec.neurons.mlp(2).down.weight[:, 7].detach().float()
-    gain = rec.neurons._gain(m, 3)
+    with torch.no_grad():
+        gain = rec.neurons._gain(m, 3)
     W = m.up.weight.detach().float() * gain[None]
     c = (W @ (w / w.norm())) / W.norm(dim=1)
     best3 = max((r for r in out["reads_it"] if r["layer"] == 3 and r["via"] == "up"), key=lambda r: abs(r["cos"]), default=None)
