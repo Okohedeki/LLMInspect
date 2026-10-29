@@ -18,8 +18,9 @@ looking rather than by name.
              earlier neurons' writes its own input reads most. Cosines, so wide and narrow layers
              compare; activations and attention are left out, as in neurons.py's "fed by".
 
-Values reach the UI as base64 bytes per layer: 0..255 over the map's range (a log scale for
-positive maps, symmetric for signed ones), with the range in the response so the legend can say it.
+Values reach the UI as base64 bytes per layer: 1..255 over the map's range on a log scale for
+positive maps (0 is zero), 0..255 symmetric about 127.5 for signed ones, with the range in the
+response so the legend can say it.
 """
 
 from __future__ import annotations
@@ -60,8 +61,8 @@ def quantize(values: dict[int, torch.Tensor], signed: bool = False, log: bool = 
         if log and pos.numel():
             lo, hi = float(torch.quantile(pos, 0.005)), float(torch.quantile(pos, 0.995))
             hi = max(hi, lo * 1.0001)
-            scale = "log"
-            enc = lambda v: (torch.log(v.clamp(lo, hi) / lo) / math.log(hi / lo)) * 255
+            scale = "log"  # 0 is kept for zero (unchanged, silent), so the smallest positive value still shows
+            enc = lambda v: torch.where(v > 0, 1 + (torch.log(v.clamp(lo, hi) / lo) / math.log(hi / lo)) * 254, 0.0)
         else:
             lo, hi = 0.0, float(torch.quantile(sample, 0.995)) or 1.0
             scale = "linear"
