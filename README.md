@@ -161,7 +161,7 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
 
 ## Limits
 
-- One request runs at a time.
+- One request runs at a time; others sent meanwhile (an agent's parallel calls, say) wait their turn.
 - Quantized weights (GGUF, Ollama) carry quantization noise, and such runs are marked exploratory.
   Use original bf16 checkpoints for causal claims. Compare a candidate with a base of the same
   precision: against a quantized base, every tensor differs and a small change is lost in the noise.
