@@ -163,3 +163,90 @@ def test_applying_a_per_expert_candidate_puts_its_weights_in(rec, tmp_path):
     assert torch.allclose(down[2, :, 7], 3 * before[2, :, 7]) and torch.equal(down[1], before[1])
     rec.edits.revert()
     assert torch.equal(down, before)
+
+
+# ---- reading expert neurons -------------------------------------------------------------------
+
+def experts_out(rec, x, layer=0):
+    """The experts' part of the block's output (the shared expert's taken off)."""
+    out = run(mlp(rec, layer), x)
+    shared = getattr(mlp(rec, layer), "shared_expert", None)
+    if shared is not None:
+        with torch.no_grad():
+            out = out - torch.sigmoid(mlp(rec, layer).shared_expert_gate(x)) * shared(x)
+    return out
+
+
+def test_the_tap_leaves_the_output_as_it_was(rec):
+    x = tokens()
+    before = run(mlp(rec), x)
+    h = rec.neurons.mlp(0).down.register_forward_pre_hook(lambda m, a: None)
+    try:
+        assert torch.allclose(run(mlp(rec), x), before, atol=1e-5)
+    finally:
+        h.remove()
+
+
+def test_the_row_of_activations_times_the_down_weight_is_the_experts_output(rec):
+    x, seen = tokens(), []
+    m = rec.neurons.mlp(0)
+    h = m.down.register_forward_pre_hook(lambda mod, a: seen.append(a[0].detach()))
+    try:
+        expect = experts_out(rec, x)
+    finally:
+        h.remove()
+    row = seen[0][0]
+    assert row.shape == (len(x), EXPERTS * WIDTH)
+    assert ((row.reshape(len(x), EXPERTS, WIDTH).abs().amax(-1) > 0).sum(-1) == 2).all()  # two experts per token
+    assert torch.allclose(row @ m.down.weight.T, expect, atol=1e-5)
+
+
+def test_zeroing_the_row_silences_the_experts(rec):
+    x = tokens()
+    h = rec.neurons.mlp(0).down.register_forward_pre_hook(lambda mod, a: (torch.zeros_like(a[0]),))
+    try:
+        assert experts_out(rec, x).abs().max() < 1e-6
+    finally:
+        h.remove()
+
+
+def test_the_neuron_tools_read_expert_layers(rec):
+    width = EXPERTS * WIDTH
+    assert [r["width"] for r in rec.atlas.layout()["layers"]] == [width, width]
+    assert len(rec.neurons.calibration()["acts"][1][0]) == width
+    card = rec.neurons.card(1, WIDTH + 3)
+    assert card["fed_by"]["positions"] > 0
+    out = rec.atlas.fires("The river rises in the northern hills and flows south to the sea.")
+    assert set(out["layers"]) == {"0", "1"}
+    assert rec.atlas.links(0, 5)
+
+
+def test_an_edited_expert_neuron_shows_on_the_changed_map(rec):
+    rec.edits.add("scale", layers="1", targets=["neuron"], index=3 * WIDTH + 1, factor=0.0)
+    rec.edits.apply()
+    import base64
+    m = rec.atlas.map("changed")
+    row = base64.b64decode(m["layers"]["1"])
+    assert [i for i, b in enumerate(row) if b] == [3 * WIDTH + 1]
+
+
+def test_the_neuron_index_covers_expert_layers(rec):
+    rec.neuron_index.build(max_tokens=300)
+    assert rec.neuron_index.ready()
+    assert rec.neuron_index.contexts(1, WIDTH + 3) is not None
+
+
+def test_trace_splits_expert_layers_into_clusters_that_add_up(rec):
+    from llminspect.recorder.session import GenParams
+
+    an = rec.anatomy
+    assert all(lm.n_clusters == 8 for lm in an.layers)
+    rec.generate(GenParams(messages=[{"role": "user", "content": "Name a color."}], max_tokens=4, temperature=0,
+                           run_hint="moe-trace"))
+    run = rec.get_run("moe-trace")
+    t = max(r["t"] for r in run.tape if r["ph"] != "gen")
+    out = rec.tracer.explain(run.id, t)
+    if rec.s.model.config.model_type != "qwen2_moe":  # a shared expert's write is in no unit, so it lands in "rest"
+        assert abs(out["logit"] - out["embed"] - sum(out["contrib"])) < 1e-3 and abs(out["rest"]) < 1e-3
+    g = max((u for u in range(an.n_units) if an.units[u]["kind"] == "cluster"), key=lambda u: abs(out["contrib"][u]))
+    assert rec.tracer.neurons(run.id, t, g)["contrib"] == pytest.approx(out["contrib"][g], abs=1e-3)

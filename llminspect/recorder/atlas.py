@@ -141,8 +141,9 @@ class Atlas:
                 if lin is None:
                     continue
                 cur = lin.weight.detach().float()
-                orig = stack.originals.get(names.get(id(lin.weight)))
-                base = cur if orig is None else orig.to(cur.device, torch.float32)
+                param = getattr(lin, "param", lin.weight)  # an expert stand-in lays its parameter out flat
+                orig = stack.originals.get(names.get(id(param)))
+                base = cur if orig is None else getattr(lin, "flat", lambda t: t)(orig.to(cur.device, torch.float32))
                 dd = torch.linalg.vector_norm(cur - base, dim=dim) ** 2
                 ww = torch.linalg.vector_norm(base, dim=dim) ** 2
                 d2 = dd if d2 is None else d2 + dd

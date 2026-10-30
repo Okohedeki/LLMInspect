@@ -44,6 +44,7 @@ import torch
 from safetensors.torch import load_file, save_file
 from torch import nn
 
+from . import experts
 from .edits import ATTN_NAMES, MLP_NAMES, _child, attention_heads, find_experts, residual_linears
 
 ENC_LO, ENC_STEPS = -16, 8   # byte = round((log2 v - ENC_LO) * ENC_STEPS), clipped to 0..255
@@ -216,8 +217,14 @@ class Anatomy:
             lm = LayerMap(i, types[i] if i < len(types) else "attention", block=block)
             lm.attn, lm.mlp = _child(block, ATTN_NAMES), _child(block, MLP_NAMES)
             lm.heads = attention_heads(lm.attn, d, cfg)
-            downs = residual_linears(lm.mlp, d, "out")
-            if len(downs) == 1 and find_experts(lm.mlp, d) is None:  # dense MLP; mixture-of-experts blocks are left out for now
+            downs, ex = residual_linears(lm.mlp, d, "out"), find_experts(lm.mlp, d)
+            if ex is not None:  # a mixture of experts: its experts' neurons through the stand-ins (experts.py)
+                try:
+                    lm.down = experts.tap(ex, lm.mlp, d)
+                    lm.readers = [(n, experts.ExpertRows(ex, lm.mlp, part, lm.down.width)) for part, n in enumerate(("gate", "up"))]
+                except ValueError:
+                    pass  # a layout the stand-ins don't read: the layer has heads only
+            elif len(downs) == 1:  # dense MLP
                 lm.down = downs[0]
                 lm.readers = [(self._name(m).rsplit(".", 2)[-2], m) for m in residual_linears(lm.mlp, d, "in")
                               if m.out_features == lm.down.in_features]
@@ -238,8 +245,9 @@ class Anatomy:
             print(f"[llminspect] unit edges unavailable: {type(exc).__name__}: {exc}", flush=True)
         self._prepare_probe()
 
-    def _name(self, module: nn.Module) -> str:
-        return self._names[id(module.weight)]
+    def _name(self, module) -> str:
+        return self._names[id(getattr(module, "param", None) if isinstance(module, (experts.ExpertTap, experts.ExpertRows))
+                              else module.weight)]
 
     # ---- the unit map ------------------------------------------------------------------
 
@@ -688,6 +696,8 @@ class Anatomy:
             for key, title, desc, module, a, b in self._head_readers(lm, i):
                 out.append(spec(key, title, f"{self._name(module)} rows {a}–{b - 1}: {desc}", module, 0, "head dims", a, b))
             return out
+        if isinstance(lm.down, experts.ExpertTap):
+            return []  # the tile reader slices 2-D parameters; fused experts are 3-D
         out = [spec("writes", "Output weights", f"{self._name(lm.down)} columns of this cluster's neurons: what they "
                     "write into the residual stream", lm.down, 1, "neurons", transpose=True)]
         for name, module in lm.readers:

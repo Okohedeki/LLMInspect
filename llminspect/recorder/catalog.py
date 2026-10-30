@@ -82,7 +82,7 @@ def _checkpoint(path: Path, types) -> dict | None:
     if cfg.get("quantization_config"):
         notes.append("Quantized checkpoint: tracing and weight edits assume dense weights.")
     if any(k in text for k in ("num_experts", "num_local_experts", "n_routed_experts")):
-        notes.append("Mixture-of-experts MLPs: weight edits and checkpoint comparisons cover every expert; Trace, the atlas and neuron reads skip these layers for now.")
+        notes.append("Mixture-of-experts MLPs: every expert's neurons are read and edited; reads run the experts in a slower plain loop, and a shared expert's neurons can be edited but not read.")
     if loaded / 2 < 1e8:
         notes.append("Very small model (under 100M parameters): good for trying the tools, not for findings.")
     if size - loaded > 0.05 * size and loaded < size:
@@ -201,7 +201,7 @@ def scan(extra_dirs: list[Path] | None = None, current: str | None = None,
         if same != tag:
             notes.insert(0, f"Same weights as {same} (a different system prompt or settings).")
         if family == "gpt_oss":
-            notes.append("Mixture-of-experts MLPs: weight edits and checkpoint comparisons cover every expert; Trace, the atlas and neuron reads skip these layers for now.")
+            notes.append("Mixture-of-experts MLPs: every expert's neurons are read and edited; reads run the experts in a slower plain loop, and a shared expert's neurons can be edited but not read.")
         convertible = None if gguf is None or not family else family in gguf
         if convertible is False:
             notes.insert(0, f"transformers can't convert {family} GGUF files, so this tag can't be loaded.")

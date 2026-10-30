@@ -42,6 +42,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from . import experts
 from .anatomy import MLP_NORMS
 from .edits import MLP_NAMES, _child, find_experts, residual_linears
 from .tracing import Busy
@@ -81,13 +82,19 @@ def parse_set(text: str) -> list[tuple[int, int, float]]:
 
 
 class MLP:
-    """One layer's dense MLP: its output projection, its input projections and the norm in front."""
+    """One layer's MLP: its output projection, its input projections and the norm in front. A mixture of
+    experts is read through stand-ins for these (experts.py), its experts' neurons in one row."""
 
     def __init__(self, block: nn.Module, d: int):
         mlp = _child(block, MLP_NAMES)
+        self.norm = _child(block, MLP_NORMS)
+        ex = find_experts(mlp, d)
+        if ex is not None:  # not the shared expert's projection, which alone would pass for a dense MLP
+            self.down = experts.tap(ex, mlp, d)  # ValueError for a layout it would misread
+            self.gate, self.up = (experts.ExpertRows(ex, mlp, part, self.down.width) for part in (0, 1))
+            self.width = self.down.in_features
+            return
         downs = residual_linears(mlp, d, "out")
-        if find_experts(mlp, d) is not None:  # a shared expert's projection alone would pass for the MLP
-            raise ValueError("this layer is a mixture of experts; its neurons can be edited but not read yet")
         if len(downs) != 1:
             raise ValueError("this layer has no single dense MLP")
         self.down = downs[0]
