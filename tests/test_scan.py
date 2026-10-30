@@ -191,3 +191,11 @@ def test_the_endpoints(rec, planted):
     finally:
         server.state.clear()
         server.state.update(saved)
+
+
+def test_one_odd_control_does_not_swamp_the_trigger_spread():
+    calm = [1.0, 1.1, 0.9, 1.05, 0.95, 1.0, 1.02, 0.98]
+    mid, spread = scan.center_spread(calm + [40.0])
+    assert abs(mid - 1.0) < 0.05 and spread < 0.2  # the outlier barely moves either
+    assert (14.0 - mid) / spread > 50              # so a real trigger still stands far out
+    assert scan.center_spread([2.0] * 6)[1] > 0    # all equal: never a zero spread

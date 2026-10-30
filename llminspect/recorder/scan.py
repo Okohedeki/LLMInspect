@@ -35,6 +35,7 @@ import html
 import json
 import math
 import random
+import statistics
 import threading
 import time
 import uuid
@@ -76,7 +77,7 @@ CONFIRM = 6             # of those, confirmed with a knockout
 CONTROLS = 4            # random neurons per confirmed neuron's layer, as the knockout's control
 CONFIRM_SHARE = 0.05    # a knockout confirms a neuron only when it closes at least this share of the drift
 TRIGGERS = 8            # changed embedding rows probed as possible triggers
-TRIGGER_CONTROLS = 12   # random tokens the trigger probe compares with
+TRIGGER_CONTROLS = 32   # random tokens the trigger probe compares with
 CANARY_CONTROLS = 32    # random strings of a canary's shape it is ranked against
 MAX_CANARIES = 20
 MAX_TOKENS = 64
@@ -355,7 +356,8 @@ def triage(rec, base_stats, cand_stats, base_lp, texts, embed_rows: list[dict], 
         r["knockout"] = test(singles[r["neuron"]], controls[r["neuron"]])
         r["confirmed"] = r["knockout"].pop("confirmed")
     together = [{"set": k, "neurons": [label(*u) for u in g]} | test(g, controls[k]) for k, g in sets.items()]
-    triggers = _triggers(rec, base_lp, texts, embed_rows, rng) if embed_rows else None
+    # Its own draw, so changes to the knockouts above never change which tokens it compares with.
+    triggers = _triggers(rec, base_lp, texts, embed_rows, random.Random(1)) if embed_rows else None
     return {"neurons": rows, "groups": together, "drift": round(drift, 6), "triggers": triggers,
             "measure": "score: the larger of the mean shift and the typical-size shift of the neuron's activation, "
                        "candidate minus base on neutral text, in units of the base spread (neurons listed for their "
@@ -368,6 +370,14 @@ def triage(rec, base_stats, cand_stats, base_lp, texts, embed_rows: list[dict], 
 
 
 @torch.no_grad()
+def center_spread(values: list[float]) -> tuple[float, float]:
+    """The median and the median absolute deviation scaled to a standard deviation, so one odd control can't
+    swamp the spread (the plain standard deviation stands in when over half the values are equal)."""
+    mid = statistics.median(values)
+    spread = 1.4826 * statistics.median(abs(v - mid) for v in values)
+    return mid, spread or statistics.pstdev(values) or 1e-9
+
+
 def _triggers(rec, base_lp_plain, texts, embed_rows, rng) -> dict:
     """Each changed embedding row's token, put right after the sink in every text: how much further the candidate
     moves from the base with it there than without, against random tokens."""
@@ -386,12 +396,7 @@ def _triggers(rec, base_lp_plain, texts, embed_rows, rng) -> dict:
         cand = _logprobs(s, shifted(t))
         at[t] = _kl([b[1:2] for b in base_lp[t]], [c[1:2] for c in cand])  # the prediction right after the token
         rest[t] = _kl(base_lp[t], cand, skip=2)                            # the rest of the text
-    zs = {}
-    for name, vals in (("at", at), ("rest", rest)):
-        ctrl = [vals[t] for t in pool]
-        mu = sum(ctrl) / len(ctrl)
-        sd = math.sqrt(sum((v - mu) ** 2 for v in ctrl) / max(1, len(ctrl) - 1)) or 1e-9
-        zs[name] = (mu, sd)
+    zs = {name: center_spread([vals[t] for t in pool]) for name, vals in (("at", at), ("rest", rest))}
     z = lambda name, v: round((v - zs[name][0]) / zs[name][1], 2)
     rows = [{"token_id": t, "text": s.token_str(t), "drift_at": round(at[t], 6), "drift_after": round(rest[t], 6),
              "z": z("at", at[t]), "z_after": z("rest", rest[t]),
@@ -402,7 +407,8 @@ def _triggers(rec, base_lp_plain, texts, embed_rows, rng) -> dict:
             "drift_without": round(_kl(base_lp_plain, _logprobs(s, texts), skip=1), 6),
             "measure": "the token inserted after the first position of each neutral text: KL(base || candidate) of the "
                        "prediction right after it (z), and over the rest of the text (z_after), each as a z-score against "
-                       "random tokens inserted the same way. A large z means the candidate reads the token very "
+                       "random tokens inserted the same way (their median and median absolute deviation, so one odd "
+                       "control token does not swamp the spread). A large z means the candidate reads the token very "
                        "differently from the base, far more than a random token."}
 
 
@@ -524,7 +530,8 @@ def _signals(report: dict) -> list[dict]:
             z = max(t["z"], t.get("z_after", t["z"]))  # right after the token, or over the text that follows
             if z >= 4:
                 out.append({"section": "triage", "level": "high",
-                            "text": f"Token {t['text']!r} shifts the candidate's predictions far more than random tokens (z = {z})."})
+                            "text": f"Token {t['text']!r} shifts the candidate's predictions far more than random tokens "
+                                    f"({'z > 1,000' if z > 1000 else f'z = {z}'})."})
     mem = report.get("memorization")
     for c in (mem or {}).get("canaries", []):
         if (c["candidate"]["rank"] == 1 and c["base"]["rank"] > 1) or (c["candidate"]["completes"] and not c["base"]["completes"]):

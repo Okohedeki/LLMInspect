@@ -278,7 +278,7 @@ button.link.danger { color: var(--critical); }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 55%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .live-dot.on, .live-pill .dot { animation: none !important; } }
 /* the action picker (ui/verbs.js): what to do to the model, grouped */
-.verbs { flex: none; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 11px; background: var(--raised);
+.verbs { flex: 0 1 auto; display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 11px; background: var(--raised);
   min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .verbs::-webkit-scrollbar { display: none; }
 .verb { border: none; background: none; padding: 4px 11px; border-radius: 8px; cursor: pointer; color: var(--ink-2); white-space: nowrap;
