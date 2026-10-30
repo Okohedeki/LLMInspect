@@ -21,6 +21,10 @@ change the parameters themselves, the way "abliterated" models are made:
                  first, so the other edits land on top of the candidate's weights. At most
                  one per stack.
 
+Mixture-of-experts blocks are edited too. Their experts are held as 3-D parameters (one slice per
+expert), and a layer's neurons are numbered in one row: expert 0's first, then expert 1's and so on,
+then a shared expert's (mlp_neurons). The router reads the residual, so it is one of the MLP's inputs.
+
 Every parameter is copied to CPU before its first change. Applying the stack restores
 those copies and replays the enabled edits in order, so toggling, reordering and
 reverting are exact. Models whose blocks pass through an extra norm before the residual
@@ -126,6 +130,106 @@ def residual_linears(block: nn.Module | None, d_model: int, side: str) -> list[n
         elif side == "in" and not writer and m.in_features == d_model:
             found.append(m)
     return found
+
+
+@dataclass
+class NeuronBlock:
+    """One weight that writes some of a layer's MLP neurons, and where they sit in the layer's numbering.
+    A dense projection is [d, width]; fused experts are [experts, d, width] (flipped: [experts, width, d]),
+    each expert's neurons numbered after the one before."""
+    weight: nn.Parameter
+    offset: int
+    width: int                     # neurons of the projection, or of each expert
+    experts: int = 0               # 0: a dense projection
+    flipped: bool = False
+    readers: list = field(default_factory=list)  # input weights of these neurons: [width, d], or [experts, k*width, d]
+    bias: nn.Parameter | None = None             # fused experts' output bias [experts, d]
+
+    @property
+    def count(self) -> int:
+        return self.width * max(self.experts, 1)
+
+    def place(self, n: int) -> tuple[int | None, int]:
+        """(expert or None, neuron within it) of the layer's neuron n, which this block holds."""
+        n -= self.offset
+        return (None, n) if not self.experts else divmod(n, self.width)
+
+    def columns(self, p: torch.Tensor, expert: int | None) -> tuple[torch.Tensor, int]:
+        """One expert's matrix (or the dense projection), and the dim that runs over its neurons."""
+        return (p if expert is None else p[expert]), 0 if self.flipped else 1
+
+
+def find_experts(mlp: nn.Module | None, d_model: int) -> nn.Module | None:
+    """The module that holds a mixture-of-experts block's fused expert weights, or None."""
+    if mlp is None:
+        return None
+    for m in mlp.modules():
+        down = m._parameters.get("down_proj")
+        if isinstance(down, torch.Tensor) and down.ndim == 3 and d_model in down.shape[1:]:
+            return m
+    return None
+
+
+def mlp_neurons(mlp: nn.Module | None, d_model: int) -> list[NeuronBlock]:
+    """Every weight that writes a layer's MLP neurons, numbered in one row (empty: the layer has none)."""
+    if mlp is None:
+        return []
+    blocks: list[NeuronBlock] = []
+    ex = find_experts(mlp, d_model)
+    if ex is not None:
+        down = ex.down_proj
+        flipped = down.shape[1] != d_model
+        width = down.shape[1] if flipped else down.shape[2]
+        readers = [w for n, w in ex._parameters.items() if w is not None and w.ndim == 3 and n != "down_proj"]
+        blocks.append(NeuronBlock(down, 0, width, down.shape[0], flipped, readers, ex._parameters.get("down_proj_bias")))
+    downs = residual_linears(mlp, d_model, "out")
+    named = {id(m): n for n, m in mlp.named_modules()}
+    for down in downs if ex is not None else downs[:1]:  # beside experts, every dense writer is a shared expert
+        name = named[id(down)]
+        parent = mlp.get_submodule(name.rsplit(".", 1)[0]) if "." in name else mlp
+        readers = [m.weight for m in parent.modules() if isinstance(m, nn.Linear) and m is not down
+                   and m.in_features == d_model and m.out_features == down.in_features]
+        blocks.append(NeuronBlock(down.weight, sum(b.count for b in blocks), down.in_features, readers=readers))
+    return blocks
+
+
+def mlp_readers(mlp: nn.Module | None, d_model: int) -> list[torch.Tensor]:
+    """2-D weights that read the residual inside an MLP: its Linear inputs and, in a mixture of experts,
+    the router's [experts, d] weight. Fused expert inputs are in mlp_neurons' blocks."""
+    if mlp is None:
+        return []
+    out = [m.weight for m in residual_linears(mlp, d_model, "in")]
+    ex = find_experts(mlp, d_model)
+    if ex is None:
+        return out
+    taken = {id(w) for w in out} | {id(m.weight) for m in mlp.modules() if isinstance(m, nn.Linear)}
+    for m in mlp.modules():  # the router: a plain [experts, d] weight on a module that is not a Linear
+        w = m._parameters.get("weight")
+        if m is not ex and isinstance(w, torch.Tensor) and w.ndim == 2 and w.shape[1] == d_model and id(w) not in taken:
+            out.append(w)
+    return out
+
+
+def _neuron_ops(blocks: list[NeuronBlock], idx: list[int], f: float, layer: int) -> list:
+    """(parameter, operation) pairs that multiply these neurons' writes by f."""
+    if not blocks:
+        raise ValueError(f"layer {layer} has no MLP neurons to edit")
+    total = sum(b.count for b in blocks)
+    if not all(0 <= n < total for n in idx):
+        raise ValueError(f"neuron must be in 0..{total - 1}")
+    ops = []
+    for b in blocks:
+        groups: dict = {}
+        for n in idx:
+            if b.offset <= n < b.offset + b.count:
+                e, j = b.place(n)
+                groups.setdefault(e, []).append(j)
+        for e, cols in groups.items():
+            def op(p, b=b, e=e, cols=torch.tensor(cols, device=b.weight.device)):
+                m, dim = b.columns(p, e)
+                m.index_copy_(dim, cols, m.index_select(dim, cols) * f)
+            ops.append((b.weight, op))
+    return ops
 
 
 def attention_heads(attn: nn.Module | None, d_model: int, config=None) -> tuple[nn.Linear, int, int] | None:
@@ -444,7 +548,14 @@ class EditStack:
                     block = attn if target.startswith("attn") else mlp
                     side = "out" if target.endswith("_out") else "in"
                     linears = residual_linears(block, d, side)
-                    if not linears:
+                    if target.startswith("mlp"):
+                        ops += self._fused_ops(mlp, side, a, e)
+                        if side == "in":  # every MLP input, the router's included
+                            linears = []
+                            ops += [(w, lambda p, a=a: remove_from_rows(p, self._v(e), a)) for w in mlp_readers(mlp, d)]
+                        if not linears and not mlp_neurons(mlp, d) and not mlp_readers(mlp, d):
+                            raise ValueError(f"layer {layer} has no {target} projection to edit")
+                    elif not linears:
                         raise ValueError(f"layer {layer} has no {target} projection to edit")
                     for lin in linears:
                         if side == "out":
@@ -468,13 +579,7 @@ class EditStack:
                         raise ValueError(f"head must be in 0..{n_heads - 1} at layer {u['layer']}")
                     ops.append((heads[0].weight, lambda p, s=u["index"] * hd, hd=hd, f=e.factor: p[:, s:s + hd].mul_(f)))
                 else:
-                    down = residual_linears(mlp, d, "out")
-                    if not down:
-                        raise ValueError(f"layer {u['layer']} has no dense MLP output projection")
-                    if not all(0 <= n < down[0].in_features for n in u["index"]):
-                        raise ValueError(f"neuron must be in 0..{down[0].in_features - 1}")
-                    cols = torch.tensor(u["index"], device=down[0].weight.device)
-                    ops.append((down[0].weight, lambda p, cols=cols, f=e.factor: p.index_copy_(1, cols, p.index_select(1, cols) * f)))
+                    ops += _neuron_ops(mlp_neurons(mlp, d), u["index"], e.factor, u["layer"])
             return ops
 
         target, f = e.targets[0], e.factor
@@ -485,6 +590,9 @@ class EditStack:
                     ops.append((lin.weight, lambda p: p.mul_(f)))
                     if lin.bias is not None:
                         ops.append((lin.bias, lambda p: p.mul_(f)))
+                if target == "mlp":  # fused experts write outside any Linear
+                    ops += [(w, lambda p: p.mul_(f)) for b in mlp_neurons(mlp, d) if b.experts
+                            for w in (b.weight, b.bias) if w is not None]
             elif target == "head":
                 heads = attention_heads(attn, d, cfg)
                 if heads is None:
@@ -494,14 +602,21 @@ class EditStack:
                     raise ValueError(f"head must be in 0..{n_heads - 1} at layer {layer}")
                 ops.append((heads[0].weight, lambda p, s=e.index * hd, hd=hd: p[:, s:s + hd].mul_(f)))
             else:
-                down = residual_linears(mlp, d, "out")
-                if not down:
-                    raise ValueError(f"layer {layer} has no dense MLP output projection")
-                idx = e.index if isinstance(e.index, list) else [e.index]
-                if not all(0 <= n < down[0].in_features for n in idx):
-                    raise ValueError(f"neuron must be in 0..{down[0].in_features - 1}")
-                cols = torch.tensor(idx, device=down[0].weight.device)
-                ops.append((down[0].weight, lambda p, cols=cols: p.index_copy_(1, cols, p.index_select(1, cols) * f)))
+                ops += _neuron_ops(mlp_neurons(mlp, d), e.index if isinstance(e.index, list) else [e.index], f, layer)
+        return ops
+
+    def _fused_ops(self, mlp, side: str, a: float, e: WeightEdit) -> list:
+        """Orthogonalize ops for fused expert weights, one Linear-shaped slice per expert."""
+        ops = []
+        for b in mlp_neurons(mlp, self.s.d_model):
+            if not b.experts:
+                continue
+            writes = side == "out"
+            fn = remove_from_rows if b.flipped == writes else remove_from_output  # whether a slice's rows are residual vectors
+            for w in [b.weight] if writes else b.readers:
+                ops.append((w, lambda p, fn=fn, a=a: [fn(p[x], self._v(e), a) for x in range(p.shape[0])]))
+            if writes and b.bias is not None:
+                ops.append((b.bias, lambda p, a=a: remove_from_rows(p, self._v(e), a)))
         return ops
 
     def _v(self, e: WeightEdit) -> torch.Tensor:

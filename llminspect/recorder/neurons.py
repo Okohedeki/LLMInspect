@@ -43,7 +43,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .anatomy import MLP_NORMS
-from .edits import MLP_NAMES, _child, residual_linears
+from .edits import MLP_NAMES, _child, find_experts, residual_linears
 from .tracing import Busy
 from .workbench import REFERENCE_TEXTS, _generate, _reference_ids
 
@@ -86,8 +86,10 @@ class MLP:
     def __init__(self, block: nn.Module, d: int):
         mlp = _child(block, MLP_NAMES)
         downs = residual_linears(mlp, d, "out")
+        if find_experts(mlp, d) is not None:  # a shared expert's projection alone would pass for the MLP
+            raise ValueError("this layer is a mixture of experts; its neurons can be edited but not read yet")
         if len(downs) != 1:
-            raise ValueError("this layer has no single dense MLP (a mixture of experts?)")
+            raise ValueError("this layer has no single dense MLP")
         self.down = downs[0]
         readers = {name.rsplit(".", 1)[-1]: m for name, m in mlp.named_modules()
                    if isinstance(m, nn.Linear) and m.in_features == d and m.out_features == self.down.in_features}

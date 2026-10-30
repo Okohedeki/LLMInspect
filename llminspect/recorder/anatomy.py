@@ -44,7 +44,7 @@ import torch
 from safetensors.torch import load_file, save_file
 from torch import nn
 
-from .edits import ATTN_NAMES, MLP_NAMES, _child, attention_heads, residual_linears
+from .edits import ATTN_NAMES, MLP_NAMES, _child, attention_heads, find_experts, residual_linears
 
 ENC_LO, ENC_STEPS = -16, 8   # byte = round((log2 v - ENC_LO) * ENC_STEPS), clipped to 0..255
 VERSION = 1                  # bump to rebuild cached cluster maps
@@ -217,7 +217,7 @@ class Anatomy:
             lm.attn, lm.mlp = _child(block, ATTN_NAMES), _child(block, MLP_NAMES)
             lm.heads = attention_heads(lm.attn, d, cfg)
             downs = residual_linears(lm.mlp, d, "out")
-            if len(downs) == 1:  # dense MLP; mixture-of-experts blocks are left out for now
+            if len(downs) == 1 and find_experts(lm.mlp, d) is None:  # dense MLP; mixture-of-experts blocks are left out for now
                 lm.down = downs[0]
                 lm.readers = [(self._name(m).rsplit(".", 2)[-2], m) for m in residual_linears(lm.mlp, d, "in")
                               if m.out_features == lm.down.in_features]

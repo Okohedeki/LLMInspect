@@ -45,7 +45,9 @@ show that a model is safe.
 - **Probe and monitor.** Read a direction or a neuron on every token, with a random direction as
   the control. Flag a run the moment a rule is met.
 - **Edit the weights.** Remove or scale attention heads, neurons and groups of neurons, or remove
-  a direction from the weights. Compare the original and edited models side by side, run behavior
+  a direction from the weights. Mixture-of-experts layers are edited too: every expert's neurons are
+  numbered in one row per layer, and the router counts as one of the MLP's inputs. Compare the original
+  and edited models side by side, run behavior
   checks on every change, and export the edited model. The edit stack is saved per model and comes
   back, applied as it was, when the recorder restarts.
 - **Compare checkpoints.** Load a fine-tune, a quantized copy or a downloaded build next to the base
@@ -170,7 +172,10 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
   a tool or sampling can stay hidden, and so can one spread over many neurons or held in attention.
   Each report lists its limits.
 - Weight edits are approximate on architectures with a norm after each block's output, such as
-  Gemma. Mixture-of-experts layers can't be edited yet.
+  Gemma.
+- Mixture-of-experts layers can be edited and compared, but Trace, the neuron atlas, neuron search and
+  the scan's neuron triage skip them for now. A candidate is read when its experts are stored the way
+  transformers' own conversion table describes (one tensor per expert, or already fused).
 - On Windows/WSL, a full GPU slows down instead of failing, so leave headroom or set
   `LLMINSPECT_GPU_FRACTION`.
 

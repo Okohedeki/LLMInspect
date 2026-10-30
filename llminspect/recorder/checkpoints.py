@@ -50,7 +50,7 @@ from safetensors import SafetensorError, safe_open
 from torch import nn
 
 from .anatomy import ATTN_NORMS, MLP_NORMS
-from .edits import ATTN_NAMES, _child, attention_heads
+from .edits import ATTN_NAMES, MLP_NAMES, _child, attention_heads, mlp_neurons
 from .model import display_name, prepare
 from .tracing import Busy
 
@@ -127,6 +127,36 @@ def module_of(name: str) -> str:
 
 
 # ---- resolving a candidate -------------------------------------------------------------------------
+
+def expert_layouts(config) -> tuple[list[tuple[str, str]], list[tuple[str, list[str]]]]:
+    """How a model's checkpoints store what the loaded model fuses, from transformers' own conversion
+    table: renamings (pattern, replacement) and expert merges (fused name, per-expert names with * for
+    the expert). Only merges that stack the experts and join their parts in order are taken; anything
+    else (a transpose, an interleave) is left out, so its tensors count as missing and the candidate is
+    refused rather than misread."""
+    try:
+        from transformers import conversion_mapping as cm
+        found = cm.get_checkpoint_conversion_mapping(config.model_type) or []
+    except Exception:  # an older transformers, or a model it has no table for
+        return [], []
+    renames, merges = [], []
+    for c in found:
+        ops = [type(o).__name__ for o in getattr(c, "operations", None) or []]
+        src, dst = list(c.source_patterns), list(c.target_patterns)
+        if type(c).__name__ == "WeightRenaming" and len(src) == len(dst) == 1:
+            renames.append((src[0], dst[0]))
+        elif ops in (["MergeModulelist"], ["MergeModulelist", "Concatenate"]) and len(dst) == 1 and all("*" in x for x in src):
+            if all(getattr(o, "dim", None) == d for o, d in zip(c.operations, (0, 1))):
+                merges.append((dst[0], src))
+    return renames, merges
+
+
+def _renamed(key: str, renames) -> str:
+    """A checkpoint's tensor name as the loaded model names it, canonical."""
+    for pattern, repl in renames:
+        key = re.sub(pattern, repl, key)
+    return canonical(key)
+
 
 def is_conversion(spec: str) -> bool:
     """A GGUF file or Ollama tag: reading it means dequantizing it into a checkpoint first (slow, once)."""
@@ -222,6 +252,7 @@ class CheckpointReader:
             except (SafetensorError, OSError) as exc:
                 raise ValueError(f"{f.name} is not a readable safetensors file ({exc})") from None
         self.params: dict[str, str] = {}     # base parameter name -> candidate tensor name
+        self.fused: dict[str, list[list[str]]] = {}  # fused expert parameter -> per expert, the tensors joined into it
         self.not_compared: list[str] = []    # candidate tensors that match no parameter (a vision tower, say)
 
     def map(self, model) -> "CheckpointReader":
@@ -234,10 +265,11 @@ class CheckpointReader:
         for n, lead in leader.items():
             c = canonical(n)
             by_canon[c] = lead if by_canon.get(c, lead) == lead else None  # None: two parameters, one name
+        renames, merges = expert_layouts(model.config)
         hits: dict[str, list[tuple[int, str]]] = {}
         extra: list[str] = []
         for key in self.keys:
-            lead = leader.get(key) or by_canon.get(canonical(key))
+            lead = leader.get(key) or by_canon.get(canonical(key)) or by_canon.get(_renamed(key, renames))
             if lead is None:
                 extra.append(key)
             else:
@@ -247,8 +279,11 @@ class CheckpointReader:
             found.sort()
             mapped[lead] = found[0][1]
             extra += [k for _, k in found[1:]]  # a second name for tied weights
+        extra = self._fuse(renames, merges, params, mapped, extra)
         bad = []
         for name, key in mapped.items():
+            if name in self.fused:
+                continue
             shape, dtype = self.info[key]
             if shape != tuple(params[name].shape):
                 bad.append(f"{name} is {list(params[name].shape)} here but {list(shape)} in the candidate")
@@ -258,6 +293,16 @@ class CheckpointReader:
             more = f" (and {len(bad) - 3} more)" if len(bad) > 3 else ""
             raise ValueError("the tensors don't fit this model, so the candidate is a different architecture or "
                              f"vocabulary (or a quantized format): {'; '.join(bad[:3])}{more}")
+        for name, groups in self.fused.items():
+            shapes = [[self.info[k][0] for k in g] for g in groups]
+            if any(self.info[k][1] not in FLOATS for g in groups for k in g):
+                bad.append(f"{name}'s experts are not stored as float weights")
+            elif any(len(x) != 2 or x[1:] != g[0][1:] for g in shapes for x in g) or \
+                    (len(groups), sum(x[0] for x in shapes[0]), shapes[0][0][1]) != tuple(params[name].shape):
+                bad.append(f"{name} is {list(params[name].shape)} here, and its experts don't stack to that in the candidate")
+        if bad:
+            raise ValueError("the tensors don't fit this model, so the candidate is a different architecture or "
+                             f"vocabulary (or a quantized format): {'; '.join(bad[:3])}")
         missing = [n for n in params if leader.get(n, n) not in mapped]
         if missing:
             hint = ""
@@ -270,6 +315,32 @@ class CheckpointReader:
         self.params = {n: mapped[n] for n in params if n in mapped}
         self.not_compared = sorted(extra)
         return self
+
+    def _fuse(self, renames, merges, params: dict, mapped: dict, extra: list[str]) -> list[str]:
+        """Find the per-expert tensors behind each fused expert parameter the candidate lacks under its own
+        name (a checkpoint keeps one tensor per expert; transformers stacks them on load). Fills self.fused
+        and marks those parameters mapped; returns the candidate tensors still unaccounted for."""
+        if not merges:
+            return extra
+        named = {_renamed(key, renames): key for key in extra}
+        used = set()
+        for name, p in params.items():
+            if name in mapped or p.ndim != 3:
+                continue
+            c = canonical(name)
+            for target, sources in merges:
+                t = target.lstrip(".")
+                if not c.endswith(t):
+                    continue
+                head = c[:len(c) - len(t)]
+                groups = [[named.get(head + src.lstrip(".").replace("*", str(e))) for src in sources]
+                          for e in range(p.shape[0])]
+                if all(k is not None for g in groups for k in g):
+                    self.fused[name] = groups
+                    mapped[name] = name
+                    used.update(k for g in groups for k in g)
+                break
+        return [k for k in extra if k not in used]
 
     @staticmethod
     def _leaders(model, params: dict) -> dict[str, str]:
@@ -317,9 +388,10 @@ class CheckpointReader:
         if hit is not None:
             self._cache.move_to_end(name)
             return hit
-        key = self.params[name]
-        with safe_open(str(self.keys[key]), framework="pt", device="cpu") as h:
-            t = h.get_tensor(key)
+        if name in self.fused:  # each expert's parts joined in order, then the experts stacked
+            t = torch.stack([torch.cat([self._read(k) for k in g]) for g in self.fused[name]])
+        else:
+            t = self._read(self.params[name])
         size = t.numel() * t.element_size()
         if keep and size <= self.budget:
             while self._cache and self._cache_bytes + size > self.budget:
@@ -328,6 +400,10 @@ class CheckpointReader:
             self._cache[name] = t
             self._cache_bytes += size
         return t
+
+    def _read(self, key: str) -> torch.Tensor:
+        with safe_open(str(self.keys[key]), framework="pt", device="cpu") as h:
+            return h.get_tensor(key)
 
     def cached_bytes(self) -> int:
         return self._cache_bytes
@@ -393,8 +469,9 @@ def _lowrank(delta: torch.Tensor, norm: float) -> float:
 
 def _roles(rec, names: dict[int, str]) -> dict[str, tuple]:
     """Which parameters carry neurons and heads, found from the modules rather than the names:
-    {name: ("down" | "in", layer)} and {name: ("o" | "q", layer, heads, head dim)}."""
-    s, nm = rec.s, rec.neurons
+    {name: ("down" | "in", layer, block, the layer's neuron count)}, the block an edits.NeuronBlock, and
+    {name: ("o" | "q", layer, heads, head dim)}."""
+    s = rec.s
     cfg = s.model.config.get_text_config()
     roles: dict[str, tuple] = {}
 
@@ -403,12 +480,13 @@ def _roles(rec, names: dict[int, str]) -> dict[str, tuple]:
             roles[names[id(weight)]] = role
 
     for i in range(s.n_layers):
-        if nm._try_mlp(i):
-            mlp = nm.mlp(i)
-            put(mlp.down.weight, ("down", i))
-            for lin in (mlp.gate, mlp.up):
-                if lin is not None:
-                    put(lin.weight, ("in", i))
+        blocks = mlp_neurons(_child(s.layers[i], MLP_NAMES), s.d_model)
+        total = sum(b.count for b in blocks)
+        for b in blocks:
+            put(b.weight, ("down", i, b, total))
+            if not (b.experts and b.flipped):  # a flipped layout may interleave its gate and up: left out
+                for w in b.readers:
+                    put(w, ("in", i, b, total))
         attn = _child(s.layers[i], ATTN_NAMES)
         heads = attention_heads(attn, s.d_model, cfg)
         if heads is not None:
@@ -420,12 +498,24 @@ def _roles(rec, names: dict[int, str]) -> dict[str, tuple]:
     return roles
 
 
+def _per_neuron(kind: str, b, t: torch.Tensor) -> torch.Tensor:
+    """Squares of t summed per neuron of block b, in the block's numbering."""
+    if not b.experts:
+        return _sq(t, 0 if kind == "down" else 1)  # down [d, n]; an input [n, d]
+    if kind == "down":
+        return _sq(t, 2 if b.flipped else 1).reshape(-1)
+    return _sq(t.reshape(b.experts, -1, b.width, t.shape[-1]), (1, 3)).reshape(-1)  # [experts, parts * width, d]
+
+
 def _accumulate(role: tuple, delta: torch.Tensor, base: torch.Tensor, neurons: dict, heads: dict) -> None:
     """Add this tensor's squared change and squared base size, per neuron or per head, to the layer's totals."""
     kind, layer = role[0], role[1]
     if kind in ("down", "in"):
-        dim, store = (0 if kind == "down" else 1), neurons
-        d2, w2 = _sq(delta, dim), _sq(base, dim)
+        b, total = role[2], role[3]
+        acc = neurons.setdefault(layer, [torch.zeros(total, dtype=torch.float64) for _ in range(2)])
+        acc[0][b.offset:b.offset + b.count] += _per_neuron(kind, b, delta)
+        acc[1][b.offset:b.offset + b.count] += _per_neuron(kind, b, base)
+        return
     else:
         store, n_heads, hd = heads, role[2], role[3]
         if kind == "o":  # columns of o_proj: [d_model, heads * head dim]
