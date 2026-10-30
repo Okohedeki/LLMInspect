@@ -8,6 +8,7 @@ labelled as such; causal experiments should use original bf16 checkpoints.
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import os
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import save_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 CACHE = Path(os.environ.get("LLMINSPECT_CACHE", Path.home() / ".cache" / "llminspect"))
 STOP_TOKENS = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "<|im_end|>", "<|endoftext|>",
@@ -100,6 +101,59 @@ def prepare(spec: str, dtype=torch.bfloat16) -> tuple[str, dict]:
                 "Use original bf16 weights for causal claims."})
 
 
+@contextlib.contextmanager
+def _gguf_reader_fixes():
+    """transformers 5 reads some gpt-oss GGUF fields (gpt-oss.rope.scaling.*) from parts[0], the field's
+    name, not its value, and fails on them. While this is on, its reader puts each such field's value
+    first, as a plain Python value."""
+    import gguf
+
+    class Reader(gguf.GGUFReader):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            for key, field in list(self.fields.items()):
+                if key.startswith("gpt-oss.") and field.data:
+                    self.fields[key] = field._replace(parts=[field.contents()] + list(field.parts),  # a plain value
+                                                      data=[i + 1 for i in field.data])
+
+    before = gguf.GGUFReader
+    gguf.GGUFReader = Reader  # transformers imports it from gguf when it reads a file
+    try:
+        yield
+    finally:
+        gguf.GGUFReader = before
+
+
+def _gguf_config(gguf_dir: Path, name: str, blob: Path, provenance: dict):
+    """The model's config for a GGUF. A config.json beside the file (a Hugging Face GGUF repo keeps the
+    original model's) wins when it is the same kind of model: transformers rebuilds the config from GGUF
+    metadata and can drop settings. Otherwise the rebuilt one, with the attention window put back when the
+    GGUF has one that transformers didn't carry over (gpt-oss)."""
+    rebuilt = AutoConfig.from_pretrained(gguf_dir, gguf_file=name)
+    side = blob.parent / "config.json"
+    if side.is_file():
+        try:
+            original = AutoConfig.from_pretrained(blob.parent)
+        except (OSError, ValueError, KeyError):
+            original = None
+        if original is not None and original.model_type == rebuilt.model_type:
+            for key in ("quantization_config",):
+                if hasattr(original, key):
+                    delattr(original, key)
+            provenance["config"] = str(side)
+            return original
+    import gguf
+    fields = gguf.GGUFReader(str(blob)).fields
+    arch = fields.get("general.architecture")
+    window = fields.get(f"{arch.contents()}.attention.sliding_window") if arch is not None else None
+    if window is not None and hasattr(rebuilt, "sliding_window") and not rebuilt.sliding_window:
+        rebuilt.sliding_window = int(window.contents())
+        if hasattr(rebuilt, "layer_types") and rebuilt.model_type == "gpt_oss":  # it alternates, sliding first
+            rebuilt.layer_types = ["sliding_attention" if i % 2 == 0 else "full_attention"
+                                   for i in range(rebuilt.num_hidden_layers)]
+    return rebuilt
+
+
 def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[str, dict]:
     """A GGUF's weights as a Hugging Face checkpoint in LLMInspect's model cache (made once)."""
     local = CACHE / "models" / folder
@@ -113,8 +167,15 @@ def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[
     if not link.exists():
         link.symlink_to(blob)
     print(f"[llminspect] dequantizing {blob} -> {local} (one time)", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(gguf_dir, gguf_file=link.name)
-    model = AutoModelForCausalLM.from_pretrained(gguf_dir, gguf_file=link.name, dtype=dtype)
+    try:
+        with _gguf_reader_fixes():
+            tokenizer = AutoTokenizer.from_pretrained(gguf_dir, gguf_file=link.name)
+            config = _gguf_config(gguf_dir, link.name, blob, provenance)
+            model = AutoModelForCausalLM.from_pretrained(gguf_dir, gguf_file=link.name, dtype=dtype, config=config)
+    except (TypeError, KeyError, ValueError) as exc:  # transformers' GGUF reader fails deep inside on what it can't parse
+        raise ValueError(f"transformers can't read {blob.name} ({type(exc).__name__}: {exc}). Some GGUFs, Ollama's own "
+                         "builds of newer models among them, use metadata it doesn't know yet; a GGUF of the same "
+                         "model from Hugging Face, or the original checkpoint, usually works.") from exc
     # The weights are already dequantized, but transformers still tags the model as
     # GGUF-quantized and refuses save_pretrained, so write config and tensors directly.
     local.mkdir(parents=True, exist_ok=True)
