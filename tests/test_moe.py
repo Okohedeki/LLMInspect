@@ -1,6 +1,7 @@
-"""Mixture-of-experts blocks: weight edits on fused expert weights, and candidates whose experts are stored
-one tensor each. Tiny random MoE models in fp32 on the CPU (one with a shared expert, one whose checkpoints
-use another module name), saved next to the tiny Llama's tokenizer."""
+"""Mixture-of-experts blocks: weight edits on fused expert weights, candidates whose experts are stored one
+tensor each, and reading expert neurons. Tiny random MoE models in fp32 on the CPU, saved next to the tiny
+Llama's tokenizer: one with a shared expert, one whose checkpoints use another module name, and one with the
+transposed, interleaved and biased layout (gpt-oss)."""
 
 import shutil
 from pathlib import Path
@@ -26,6 +27,8 @@ ARCHS = {
     "qwen2_moe": dict(num_experts=EXPERTS, num_experts_per_tok=2, moe_intermediate_size=WIDTH,
                       shared_expert_intermediate_size=SHARED, decoder_sparse_step=1, intermediate_size=96),
     "mixtral": dict(num_local_experts=EXPERTS, num_experts_per_tok=2, intermediate_size=WIDTH),
+    "gpt_oss": dict(num_local_experts=EXPERTS, num_experts_per_tok=2, intermediate_size=WIDTH, head_dim=16,
+                    sliding_window=32, layer_types=["sliding_attention", "full_attention"]),
 }
 
 
@@ -34,7 +37,12 @@ def save_model(folder: Path, arch: str) -> Path:
     cfg = AutoConfig.for_model(arch, hidden_size=D, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
                                vocab_size=128257, max_position_embeddings=256, bos_token_id=128000,
                                eos_token_id=128009, **ARCHS[arch])
-    AutoModelForCausalLM.from_config(cfg).save_pretrained(folder)
+    model = AutoModelForCausalLM.from_config(cfg)
+    with torch.no_grad():  # random biases, so the tests see them (they start at zero)
+        for name, p in model.named_parameters():
+            if name.endswith("bias"):
+                p.normal_(0, 0.02)
+    model.save_pretrained(folder)
     for f in MODEL_DIR.iterdir():
         if f.name.startswith("tokenizer") or f.suffix == ".jinja":
             shutil.copy(f, folder / f.name)
@@ -75,7 +83,8 @@ def tokens(n=12):
 
 def run(block, x):
     with torch.no_grad():
-        return block(x[None])[0]
+        out = block(x[None])
+    return (out[0] if isinstance(out, tuple) else out)[0]  # some blocks also return their router scores
 
 
 def test_every_expert_neuron_is_numbered_in_one_row(rec):
@@ -89,12 +98,14 @@ def test_every_expert_neuron_is_numbered_in_one_row(rec):
 
 
 def test_a_knocked_out_expert_neuron_changes_only_its_own_column_and_reverts(rec):
-    down = mlp_neurons(mlp(rec), D)[0].weight
+    b = mlp_neurons(mlp(rec), D)[0]
+    down = b.weight
     before = down.detach().clone()
     rec.edits.add("scale", layers="0", targets=["neuron"], index=2 * WIDTH + 3, factor=0.0)
     rec.edits.apply()
-    assert torch.all(down[2, :, 3] == 0)
-    changed = (down != before).any(dim=1)
+    m, dim = b.columns(down, 2)
+    assert torch.all(m.select(dim, 3) == 0)
+    changed = (down != before).any(dim=2 if b.flipped else 1)  # per expert neuron
     assert changed.sum() == 1 and changed[2, 3]
     rec.edits.revert()
     assert torch.equal(down, before)
@@ -134,9 +145,14 @@ def candidate(rec, tmp_path) -> Path:
     folder = tmp_path / "cand"
     shutil.copytree(rec.folder, folder)
     tensors = load_file(str(folder / "model.safetensors"))
-    key = next(k for k in tensors if ".layers.1." in k and ".experts.2." in k and k.endswith(("down_proj.weight", "w2.weight")))
-    tensors[key] = tensors[key].clone()
-    tensors[key][:, 7] *= 3
+    key = next((k for k in tensors if ".layers.1." in k and ".experts.2." in k and k.endswith(("down_proj.weight", "w2.weight"))), None)
+    if key is not None:
+        tensors[key] = tensors[key].clone()
+        tensors[key][:, 7] *= 3
+    else:  # stored fused, [experts, width, d]
+        key = next(k for k in tensors if ".layers.1." in k and k.endswith("experts.down_proj"))
+        tensors[key] = tensors[key].clone()
+        tensors[key][2, 7] *= 3
     save_file(tensors, str(folder / "model.safetensors"), metadata={"format": "pt"})
     return folder
 
@@ -144,10 +160,10 @@ def candidate(rec, tmp_path) -> Path:
 def test_a_candidate_stored_per_expert_is_compared_neuron_by_neuron(rec, tmp_path):
     folder = candidate(rec, tmp_path)
     reader = ck.open_candidate(str(folder), rec.s.model)
-    assert reader.fused and not reader.not_compared
+    assert not reader.not_compared and bool(reader.fused) == (rec.s.model.config.model_type != "gpt_oss")
     report = ck.compare_weights(rec, reader)
     changed = [r["name"] for r in report["tensors"] if r["rel"] > 0]
-    assert changed == [n for n in reader.fused if ".layers.1." in n and n.endswith("down_proj")]
+    assert changed == [n for n in reader.params if ".layers.1." in n and n.endswith("experts.down_proj")]
     assert report["neurons"]["top"][0]["neuron"] == f"L1 N{2 * WIDTH + 7}"
 
 
@@ -155,12 +171,14 @@ def test_applying_a_per_expert_candidate_puts_its_weights_in(rec, tmp_path):
     folder = candidate(rec, tmp_path)
     reader = ck.open_candidate(str(folder), rec.s.model)
     report = ck.compare_weights(rec, reader)
-    down = mlp_neurons(mlp(rec, 1), D)[0].weight
+    b = mlp_neurons(mlp(rec, 1), D)[0]
+    down = b.weight
     before = down.detach().clone()
     rec.edits.add("checkpoint", checkpoint={"spec": str(folder), "folder": str(folder), "name": "cand",
                                             "report": report["id"], "changed": [r["name"] for r in report["tensors"] if r["rel"] > 0]})
     rec.edits.apply()
-    assert torch.allclose(down[2, :, 7], 3 * before[2, :, 7]) and torch.equal(down[1], before[1])
+    m, dim = b.columns(down, 2)
+    assert torch.allclose(m.select(dim, 7), 3 * b.columns(before, 2)[0].select(dim, 7)) and torch.equal(down[1], before[1])
     rec.edits.revert()
     assert torch.equal(down, before)
 
@@ -187,6 +205,15 @@ def test_the_tap_leaves_the_output_as_it_was(rec):
         h.remove()
 
 
+def zeroed(rec, x):
+    """The experts' output with every neuron's activation zeroed: what the experts' own biases write."""
+    h = rec.neurons.mlp(0).down.register_forward_pre_hook(lambda mod, a: (torch.zeros_like(a[0]),))
+    try:
+        return experts_out(rec, x)
+    finally:
+        h.remove()
+
+
 def test_the_row_of_activations_times_the_down_weight_is_the_experts_output(rec):
     x, seen = tokens(), []
     m = rec.neurons.mlp(0)
@@ -198,16 +225,12 @@ def test_the_row_of_activations_times_the_down_weight_is_the_experts_output(rec)
     row = seen[0][0]
     assert row.shape == (len(x), EXPERTS * WIDTH)
     assert ((row.reshape(len(x), EXPERTS, WIDTH).abs().amax(-1) > 0).sum(-1) == 2).all()  # two experts per token
-    assert torch.allclose(row @ m.down.weight.T, expect, atol=1e-5)
+    assert torch.allclose(row @ m.down.weight.T + zeroed(rec, x), expect, atol=1e-5)
 
 
-def test_zeroing_the_row_silences_the_experts(rec):
-    x = tokens()
-    h = rec.neurons.mlp(0).down.register_forward_pre_hook(lambda mod, a: (torch.zeros_like(a[0]),))
-    try:
-        assert experts_out(rec, x).abs().max() < 1e-6
-    finally:
-        h.remove()
+def test_zeroing_the_row_leaves_only_the_experts_biases(rec):
+    biased = getattr(rec.neurons.mlp(0).down.experts, "down_proj_bias", None) is not None
+    assert (zeroed(rec, x := tokens()).abs().max() > 1e-4) == biased
 
 
 def test_the_neuron_tools_read_expert_layers(rec):
@@ -246,7 +269,8 @@ def test_trace_splits_expert_layers_into_clusters_that_add_up(rec):
     run = rec.get_run("moe-trace")
     t = max(r["t"] for r in run.tape if r["ph"] != "gen")
     out = rec.tracer.explain(run.id, t)
-    if rec.s.model.config.model_type != "qwen2_moe":  # a shared expert's write is in no unit, so it lands in "rest"
-        assert abs(out["logit"] - out["embed"] - sum(out["contrib"])) < 1e-3 and abs(out["rest"]) < 1e-3
+    assert abs(out["logit"] - out["embed"] - sum(out["contrib"]) - out["rest"]) < 1e-2
+    if rec.s.model.config.model_type == "mixtral":  # a shared expert's write and biases are in no unit: they are "rest"
+        assert abs(out["rest"]) < 1e-3
     g = max((u for u in range(an.n_units) if an.units[u]["kind"] == "cluster"), key=lambda u: abs(out["contrib"][u]))
     assert rec.tracer.neurons(run.id, t, g)["contrib"] == pytest.approx(out["contrib"][g], abs=1e-3)

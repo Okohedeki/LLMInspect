@@ -200,8 +200,14 @@ class Subject:
         self.name = name or env_name or display_name(spec)
         self.slug = _slug(self.name.split("/")[-1])
         self.tokenizer = AutoTokenizer.from_pretrained(path)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            path, dtype=dtype, device_map=device, attn_implementation="sdpa")
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path, dtype=dtype, device_map=device, attn_implementation="sdpa")
+        except ValueError as exc:  # an architecture without SDPA attention (gpt-oss, with its attention sinks)
+            if "scaled_dot_product_attention" not in str(exc):
+                raise
+            self.model = AutoModelForCausalLM.from_pretrained(
+                path, dtype=dtype, device_map=device, attn_implementation="eager")
         self.model.eval()
         self.device = next(self.model.parameters()).device
         self.layers = _first_attr(self.model, ["model.layers", "model.language_model.layers",

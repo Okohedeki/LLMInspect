@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import sys
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -188,9 +189,14 @@ class Tracer:
     def _attention_capture(self, cap: Capture):
         """Route softmax attention through a wrapper that keeps the last query's weights."""
         impl = self.s.model.config._attn_implementation
-        local = ALL_ATTENTION_FUNCTIONS._local_mapping
-        before = local.get(impl)
-        original = ALL_ATTENTION_FUNCTIONS[impl]
+        if impl == "eager":  # models call their own module's eager function, not the shared table
+            mods = {sys.modules[type(m).__module__] for m in self.s.model.modules()}
+            mods = [m for m in mods if callable(getattr(m, "eager_attention_forward", None))]
+            original = mods[0].eager_attention_forward if mods else None
+        else:
+            local = ALL_ATTENTION_FUNCTIONS._local_mapping
+            before = local.get(impl)
+            original = ALL_ATTENTION_FUNCTIONS[impl]
 
         def attend(module, query, key, value, attention_mask, **kwargs):
             if self._capturing and getattr(module, "layer_idx", None) is not None:
@@ -199,9 +205,23 @@ class Tracer:
                 if k.shape[0] != q.shape[0]:
                     k = k.repeat_interleave(q.shape[0] // k.shape[0], dim=0)
                 scale = kwargs.get("scaling") or getattr(module, "scaling", q.shape[-1] ** -0.5)
-                cap.attn[module.layer_idx] = torch.softmax(torch.einsum("hd,hnd->hn", q, k) * scale, dim=-1)
+                logits = torch.einsum("hd,hnd->hn", q, k) * scale
+                sinks = getattr(module, "sinks", None)  # a per-head logit that takes attention and reads nothing (gpt-oss)
+                if isinstance(sinks, torch.Tensor) and sinks.shape == (q.shape[0],):
+                    cap.attn[module.layer_idx] = torch.softmax(torch.cat([logits, sinks.float()[:, None]], -1), -1)[:, :-1]
+                else:
+                    cap.attn[module.layer_idx] = torch.softmax(logits, dim=-1)
             return original(module, query, key, value, attention_mask, **kwargs)
 
+        if impl == "eager":
+            for m in mods:
+                m.eager_attention_forward = attend
+            try:
+                yield
+            finally:
+                for m in mods:
+                    m.eager_attention_forward = original
+            return
         local[impl] = attend
         try:
             yield
