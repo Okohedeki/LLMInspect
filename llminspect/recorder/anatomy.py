@@ -45,7 +45,7 @@ from safetensors.torch import load_file, save_file
 from torch import nn
 
 from . import experts
-from .edits import ATTN_NAMES, MLP_NAMES, _child, attention_heads, find_experts, residual_linears
+from .edits import ATTN_NAMES, ATTN_NORMS, MLP_NAMES, MLP_NORMS, _child, attention_heads, find_experts, residual_linears
 
 ENC_LO, ENC_STEPS = -16, 8   # byte = round((log2 v - ENC_LO) * ENC_STEPS), clipped to 0..255
 VERSION = 1                  # bump to rebuild cached cluster maps
@@ -56,8 +56,6 @@ EDGE_FACTORS = 4             # top output directions per unit used for edges
 EDGES_KEPT = 16              # strongest incoming and outgoing edges kept per unit
 EDGE_ROWS = 4096             # reader rows per matmul when scoring edges
 EDGE_VERSION = 1
-ATTN_NORMS = ("input_layernorm", "ln_1", "attention_norm", "norm1")
-MLP_NORMS = ("pre_feedforward_layernorm", "post_attention_layernorm", "ln_2", "ffn_norm", "norm2")
 
 MEASURES = {
     "head": "Norm of what the head writes into the residual stream at this token, ||W_O[:, h] x_h||.",

@@ -171,8 +171,10 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
   phrase heuristic, and probes single tokens. A change that needs a longer trigger, a long context,
   a tool or sampling can stay hidden, and so can one spread over many neurons or held in attention.
   Each report lists its limits.
-- Weight edits are approximate on architectures with a norm after each block's output, such as
-  Gemma.
+- Removing a direction from the weights folds in the norms' gains, so it is exact on writers, including
+  blocks with a norm after their output (Gemma 2/3, OLMo 2). Readers lose the direction up to the
+  norm's overall scale, which the direction still moves a little. Norms with a bias or a mean
+  subtracted (LayerNorm) can't be folded, and those edits stay approximate.
 - Mixture-of-experts layers: every expert's neurons are traced, read, searched and edited, numbered in
   one row per layer. While anything reads them the experts run in a plain loop, which is slower than
   the model's own kernels. A shared expert's neurons can be edited but not read, and its write lands in

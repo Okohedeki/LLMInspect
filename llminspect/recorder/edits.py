@@ -10,6 +10,13 @@ change the parameters themselves, the way "abliterated" models are made:
                  With a = 1 on the embeddings plus every attention and MLP output, this is
                  the directional ablation of Arditi et al. (2024), "Refusal in language
                  models is mediated by a single direction".
+                 Norms are folded in, so the removal is exact where it can be. A block whose
+                 output passes through an RMS norm before the residual add (Gemma 2/3, OLMo 2)
+                 writes g ⊙ x / rms(x) with the norm's gain g: removing u = g ⊙ v (unit length)
+                 from x leaves the written vector with no v at all, since rms(x) is one number.
+                 Readers sit behind an input norm the same way, so they lose u = g ⊙ v too: they
+                 then read nothing along v but through rms(x), which v still moves a little. A
+                 norm with a bias or a mean subtracted (LayerNorm) can't be folded; v is used.
   scale          multiply a component's contribution by a factor: a layer's whole attention
                  or MLP block, one attention head (standard or linear attention), or one or
                  more MLP neurons. Factor 0 is a lesion.
@@ -28,7 +35,7 @@ then a shared expert's (mlp_neurons). The router reads the residual, so it is on
 Every parameter is copied to CPU before its first change. Applying the stack restores
 those copies and replays the enabled edits in order, so toggling, reordering and
 reverting are exact. Models whose blocks pass through an extra norm before the residual
-add (Gemma 2/3) are only approximately orthogonalized by the writer rule.
+add are orthogonalized exactly (see orthogonalize).
 
 Views of the original weights (`suspended`) restore the originals and replay the edits. A
 checkpoint edit's tensors are kept in CPU memory (up to cpu_budget), so replaying it is a copy
@@ -57,6 +64,9 @@ from safetensors.torch import load_file, save_file
 from torch import nn
 
 ATTN_NAMES = ("self_attn", "linear_attn", "attn", "attention", "mixer")
+ATTN_NORMS = ("input_layernorm", "ln_1", "attention_norm", "norm1")
+MLP_NORMS = ("pre_feedforward_layernorm", "post_attention_layernorm", "ln_2", "ffn_norm", "norm2")
+OUTPUT_NORMS = {"attn": "post_attention_layernorm", "mlp": "post_feedforward_layernorm"}
 MLP_NAMES = ("mlp", "feed_forward", "ffn")
 WRITER_NAMES = {"o_proj", "out_proj", "down_proj", "c_proj", "dense_4h_to_h", "wo", "w2"}
 KINDS = ("orthogonalize", "scale", "units", "checkpoint")
@@ -114,6 +124,36 @@ def layer_ranges(layers: list[int]) -> str:
 
 def _child(layer: nn.Module, names) -> nn.Module | None:
     return next((getattr(layer, n) for n in names if hasattr(layer, n)), None)
+
+
+def output_norm(layer: nn.Module, kind: str) -> nn.Module | None:
+    """The norm a block's output ("attn" or "mlp") passes through before the residual add, or None. A layer
+    with a post_feedforward_layernorm uses post_attention_layernorm that way too (Gemma 2/3, OLMo 2); in
+    Llama-style layers, post_attention_layernorm is the MLP's input norm instead."""
+    if getattr(layer, "post_feedforward_layernorm", None) is None:
+        return None
+    return getattr(layer, OUTPUT_NORMS[kind], None)
+
+
+def input_norm(layer: nn.Module, kind: str) -> nn.Module | None:
+    """The norm in front of a block ("attn" or "mlp"), or None."""
+    names = ATTN_NORMS if kind == "attn" else MLP_NORMS
+    if output_norm(layer, "mlp") is not None:
+        names = tuple(n for n in names if n not in OUTPUT_NORMS.values())
+    return _child(layer, names)
+
+
+def norm_gain(norm: nn.Module | None, d_model: int, device) -> torch.Tensor | None:
+    """Per-dimension gain of an RMS-style norm, fp32; None when there is none to fold (no norm, no weight,
+    or a norm with a bias or a mean subtracted, whose output a weight edit can't steer exactly)."""
+    if norm is None or isinstance(norm, nn.LayerNorm):
+        return None
+    params = dict(norm.named_parameters())
+    if not params or any(n.endswith("bias") for n in params):
+        return None
+    p = next(iter(params.values()))
+    with torch.no_grad():
+        return norm(torch.ones(1, d_model, device=device, dtype=p.dtype)).float()[0]
 
 
 def residual_linears(block: nn.Module | None, d_model: int, side: str) -> list[nn.Linear]:
@@ -541,29 +581,33 @@ class EditStack:
             for target in e.targets:
                 if target in ("embed", "unembed"):
                     emb = model.get_input_embeddings() if target == "embed" else model.get_output_embeddings()
-                    ops.append((emb.weight, lambda p, a=a: remove_from_rows(p, self._v(e), a)))
+                    norm = getattr(self.s, "norm", None) if target == "unembed" else None  # the final norm feeds the unembedding
+                    ops.append((emb.weight, lambda p, a=a, norm=norm: remove_from_rows(p, self._u(e, norm), a)))
                     continue
                 for layer in e.layers:
                     attn, mlp = self._blocks(layer)
-                    block = attn if target.startswith("attn") else mlp
+                    kind = "attn" if target.startswith("attn") else "mlp"
+                    block = attn if kind == "attn" else mlp
                     side = "out" if target.endswith("_out") else "in"
+                    norm = (output_norm if side == "out" else input_norm)(self.s.layers[layer], kind)
+                    vec = lambda norm=norm: self._u(e, norm)  # read when applied: a checkpoint edit may change the norm first
                     linears = residual_linears(block, d, side)
                     if target.startswith("mlp"):
-                        ops += self._fused_ops(mlp, side, a, e)
+                        ops += self._fused_ops(mlp, side, a, vec)
                         if side == "in":  # every MLP input, the router's included
                             linears = []
-                            ops += [(w, lambda p, a=a: remove_from_rows(p, self._v(e), a)) for w in mlp_readers(mlp, d)]
+                            ops += [(w, lambda p, a=a, vec=vec: remove_from_rows(p, vec(), a)) for w in mlp_readers(mlp, d)]
                         if not linears and not mlp_neurons(mlp, d) and not mlp_readers(mlp, d):
                             raise ValueError(f"layer {layer} has no {target} projection to edit")
                     elif not linears:
                         raise ValueError(f"layer {layer} has no {target} projection to edit")
                     for lin in linears:
                         if side == "out":
-                            ops.append((lin.weight, lambda p, a=a: remove_from_output(p, self._v(e), a)))
+                            ops.append((lin.weight, lambda p, a=a, vec=vec: remove_from_output(p, vec(), a)))
                             if lin.bias is not None:
-                                ops.append((lin.bias, lambda p, a=a: p.sub_(a * self._v(e) * (self._v(e) @ p.float()))))
+                                ops.append((lin.bias, lambda p, a=a, vec=vec: p.sub_((a * vec() * (vec() @ p.float())).to(p.dtype))))
                         else:
-                            ops.append((lin.weight, lambda p, a=a: remove_from_rows(p, self._v(e), a)))
+                            ops.append((lin.weight, lambda p, a=a, vec=vec: remove_from_rows(p, vec(), a)))
             return ops
 
         cfg = model.config.get_text_config()
@@ -605,7 +649,7 @@ class EditStack:
                 ops += _neuron_ops(mlp_neurons(mlp, d), e.index if isinstance(e.index, list) else [e.index], f, layer)
         return ops
 
-    def _fused_ops(self, mlp, side: str, a: float, e: WeightEdit) -> list:
+    def _fused_ops(self, mlp, side: str, a: float, vec) -> list:
         """Orthogonalize ops for fused expert weights, one Linear-shaped slice per expert."""
         ops = []
         for b in mlp_neurons(mlp, self.s.d_model):
@@ -614,13 +658,22 @@ class EditStack:
             writes = side == "out"
             fn = remove_from_rows if b.flipped == writes else remove_from_output  # whether a slice's rows are residual vectors
             for w in [b.weight] if writes else b.readers:
-                ops.append((w, lambda p, fn=fn, a=a: [fn(p[x], self._v(e), a) for x in range(p.shape[0])]))
+                ops.append((w, lambda p, fn=fn, a=a: [fn(p[x], vec(), a) for x in range(p.shape[0])]))
             if writes and b.bias is not None:
-                ops.append((b.bias, lambda p, a=a: remove_from_rows(p, self._v(e), a)))
+                ops.append((b.bias, lambda p, a=a: remove_from_rows(p, vec(), a)))
         return ops
 
     def _v(self, e: WeightEdit) -> torch.Tensor:
         return e.vector.to(self.s.device)
+
+    def _u(self, e: WeightEdit, norm: nn.Module | None) -> torch.Tensor:
+        """The edit's direction with a norm's gain folded in (see orthogonalize), unit length."""
+        v = self._v(e)
+        g = norm_gain(norm, self.s.d_model, v.device)
+        if g is None:
+            return v
+        u = g * v
+        return u / u.norm().clamp_min(1e-12)
 
     # ---- applying -----------------------------------------------------------------
 
