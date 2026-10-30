@@ -405,6 +405,31 @@
       <div class="cp-body" id="cp-body"></div>
     </section>
 
+    <section class="panel wb-scan" id="sc-panel" aria-labelledby="h-scan">
+      <div class="panel-head"><h2 id="h-scan">Deploy scan</h2></div>
+      <p class="hint">Before deploying a checkpoint, check it against this model in one report: its files, its weight
+        diff, how its behavior drifted, whether it still refuses what the base refuses, which neurons the difference
+        runs through, and whether it learned secrets you planted. The report is evidence with its limits, never a verdict.</p>
+      <form class="sc-form" id="sc-form">
+        <label class="grow">Candidate
+          <input id="sc-spec" type="text" list="cp-models" spellcheck="false" autocomplete="off" autocapitalize="off"
+            placeholder="a folder, a .gguf file, ollama:tag or a cached Hugging Face repo id">
+        </label>
+        <label class="grow">Canaries <span class="dim">optional, one per line: secrets planted in the training data</span>
+          <textarea id="sc-canaries" rows="2" spellcheck="false" placeholder="The access code for the demo account is QX-2291-LM."></textarea>
+        </label>
+        <label class="grow">Manifest <span class="dim">optional: a path to sha256sum lines or JSON; one in the candidate's folder is found by itself</span>
+          <input id="sc-manifest" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="/path/to/SHA256SUMS">
+        </label>
+        <fieldset class="sc-sections-pick" id="sc-sections"><legend>Sections</legend></fieldset>
+        <button type="submit" class="primary" id="sc-start">Start scan</button>
+      </form>
+      <div class="wb-msg" id="sc-msg" role="status"></div>
+      <div class="sc-progress" id="sc-progress" hidden aria-live="polite"></div>
+      <div class="sc-report" id="sc-report" hidden></div>
+      <div class="sc-history nv-links" id="sc-history" hidden></div>
+    </section>
+
     <section class="panel wb-compare" aria-labelledby="h-compare">
       <div class="panel-head"><h2 id="h-compare">3 · Compare original and edited</h2></div>
       <div class="wb-replay" data-edits="replay"></div>
@@ -576,6 +601,7 @@
   <script type="module" src="/ui/atlas.js"></script>
   <script type="module" src="/ui/workbench.js"></script>
   <script type="module" src="/ui/checkpoints.js"></script>
+  <script type="module" src="/ui/scan.js"></script>
   <script type="module" src="/ui/weights.js"></script>
   <script type="module" src="/ui/verbs.js"></script>
 </body>

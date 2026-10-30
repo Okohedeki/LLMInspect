@@ -79,11 +79,11 @@ next. The steps run across four screens:
 
 - **Watch**: the conversation live, a per-token timeline, a token inspector and steering.
 - **Trace**: the conversation next to a graph of the model's heads and neuron clusters.
-- **Tune**: directions, weight edits, checkpoints, side-by-side comparisons and export.
+- **Tune**: directions, weight edits, checkpoints, the deploy scan, side-by-side comparisons and export.
 - **Neurons**: the neuron atlas, neuron search, neuron cards, steering sweeps and knobs.
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
-run it. The deploy scan has no screen yet; start it from the API (below).
+run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).
 
 ## Run it
 

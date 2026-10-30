@@ -18,6 +18,7 @@ import asyncio  # noqa: E402
 import contextlib
 import gc
 import json
+import mimetypes
 import struct
 import threading
 import time
@@ -1193,6 +1194,10 @@ async def index():
     return FileResponse(UI_DIR / "index.html")
 
 
+# The UI's types, fixed: on Windows Python reads them from the registry, where .js is often text/plain,
+# and browsers refuse a module script served as that.
+for _type, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("text/html", ".html"), ("image/svg+xml", ".svg")):
+    mimetypes.add_type(_type, _ext)
 app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 
