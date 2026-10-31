@@ -13,7 +13,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 
 from llminspect.config import Settings
 from llminspect.recorder import checkpoints as ck
-from llminspect.recorder.edits import _child, MLP_NAMES, mlp_neurons
+from llminspect.recorder.edits import _child, EditStack, MLP_NAMES, mlp_neurons
 from llminspect.recorder.model import Subject
 from llminspect.recorder.session import Recorder
 from llminspect.recorder.store import RunStore
@@ -32,11 +32,11 @@ ARCHS = {
 }
 
 
-def save_model(folder: Path, arch: str) -> Path:
+def save_model(folder: Path, arch: str, **override) -> Path:
     torch.manual_seed(0)
     cfg = AutoConfig.for_model(arch, hidden_size=D, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
                                vocab_size=128257, max_position_embeddings=256, bos_token_id=128000,
-                               eos_token_id=128009, **ARCHS[arch])
+                               eos_token_id=128009, **(ARCHS[arch] | override))
     model = AutoModelForCausalLM.from_config(cfg)
     with torch.no_grad():  # random biases, so the tests see them (they start at zero)
         for name, p in model.named_parameters():
@@ -61,8 +61,11 @@ def rec(request, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def clean(rec):
+def clean(request):
     yield
+    if "rec" not in request.fixturenames:
+        return
+    rec = request.getfixturevalue("rec")
     rec.edits.revert()
     for eid in list(rec.edits.edits):
         rec.edits.remove(eid)
@@ -274,3 +277,26 @@ def test_trace_splits_expert_layers_into_clusters_that_add_up(rec):
         assert abs(out["rest"]) < 1e-3
     g = max((u for u in range(an.n_units) if an.units[u]["kind"] == "cluster"), key=lambda u: abs(out["contrib"][u]))
     assert rec.tracer.neurons(run.id, t, g)["contrib"] == pytest.approx(out["contrib"][g], abs=1e-3)
+
+
+@pytest.mark.parametrize("arch", ["mixtral", "gpt_oss"])
+def test_experts_as_wide_as_the_model_are_edited_along_the_right_axis(arch, tmp_path):
+    """When an expert's width equals d (gpt-oss-20b), down_proj's shape is square and can't say which axis
+    holds the neurons; one neuron's knockout must still change only that neuron, and a removed direction
+    must leave no trace in the experts' writes."""
+    subject = Subject(str(save_model(tmp_path, arch, intermediate_size=D)), dtype=torch.float32, device="cpu")
+    edits, block = EditStack(subject), _child(subject.layers[0], MLP_NAMES)
+    b = mlp_neurons(block, D)[0]
+    assert b.flipped == (arch == "gpt_oss") and b.width == D
+    before = b.weight.detach().clone()
+    edits.add("scale", layers="0", targets=["neuron"], index=2 * D + 3, factor=0.0)
+    edits.apply()
+    changed = (b.weight != before).any(dim=2 if b.flipped else 1)
+    assert changed.sum() == 1 and changed[2, 3]
+    edits.revert()
+    for eid in list(edits.edits):
+        edits.remove(eid)
+    v, x = unit(), tokens()
+    edits.add("orthogonalize", layers="all", targets=["mlp_out"], direction="test", vector=v)
+    edits.apply()
+    assert run(block, x).matmul(v).abs().max() < 1e-5

@@ -210,6 +210,15 @@ def find_experts(mlp: nn.Module | None, d_model: int) -> nn.Module | None:
     return None
 
 
+def _experts_flipped(ex: nn.Module, d_model: int) -> bool:
+    """Whether fused experts keep down_proj as [experts, width, d]. When width == d (gpt-oss-20b) the down
+    weight's shape can't tell, but gate_up_proj's can: [experts, 2 · width, d] or [experts, d, 2 · width]."""
+    down, gate_up = ex.down_proj, ex._parameters.get("gate_up_proj")
+    if down.shape[1] != down.shape[2] or gate_up is None or gate_up.ndim != 3:
+        return down.shape[1] != d_model
+    return gate_up.shape[1] == d_model
+
+
 def mlp_neurons(mlp: nn.Module | None, d_model: int) -> list[NeuronBlock]:
     """Every weight that writes a layer's MLP neurons, numbered in one row (empty: the layer has none)."""
     if mlp is None:
@@ -218,7 +227,7 @@ def mlp_neurons(mlp: nn.Module | None, d_model: int) -> list[NeuronBlock]:
     ex = find_experts(mlp, d_model)
     if ex is not None:
         down = ex.down_proj
-        flipped = down.shape[1] != d_model
+        flipped = _experts_flipped(ex, d_model)
         width = down.shape[1] if flipped else down.shape[2]
         readers = [w for n, w in ex._parameters.items() if w is not None and w.ndim == 3 and n != "down_proj"]
         blocks.append(NeuronBlock(down, 0, width, down.shape[0], flipped, readers, ex._parameters.get("down_proj_bias")))
