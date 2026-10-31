@@ -47,7 +47,8 @@ def call(tools: list[tuple[str, dict]], env: dict) -> list[dict]:
                 out = [{"tools": sorted(t.name for t in (await session.list_tools()).tools)}]
                 for name, args in tools:
                     res = await session.call_tool(name, args)
-                    out.append(res.structured_content or json.loads(res.content[0].text))
+                    assert res.structured_content is not None, res.content  # agents get data, not text
+                    out.append(res.structured_content)
                 return out
     return anyio.run(go)
 

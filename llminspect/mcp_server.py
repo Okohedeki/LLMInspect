@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
@@ -64,8 +64,8 @@ def _view(report: dict, detail: str) -> dict:
     return report | {"html": head["html"]}
 
 
-@server.tool(annotations=READ_ONLY)
-def list_models(roots: list[str] | None = None) -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def list_models(roots: list[str] | None = None) -> dict[str, Any]:
     """Models on this machine: name, folder, size and weight formats. `roots` defaults to the Hugging Face cache,
     LLMInspect's model cache and LLMINSPECT_MODEL_DIRS."""
     rows = []
@@ -77,9 +77,9 @@ def list_models(roots: list[str] | None = None) -> dict:
     return {"roots": [str(r) for r in _roots(roots)], "models": rows}
 
 
-@server.tool()
+@server.tool(structured_output=True)
 def check_model(candidate: str, base: str | None = None, roots: list[str] | None = None, deep: bool = False,
-                wait_seconds: float = 20) -> dict:
+                wait_seconds: float = 20) -> dict[str, Any]:
     """Run every check on the model folder `candidate` and return one report: code that runs on load, which model
     it really comes from, what changed outside the weights, and (deep=true) inside them.
 
@@ -104,8 +104,8 @@ def _job_view(jid: str, detail: str) -> dict:
         {"poll": "get_check with this job id"} if job["status"] == "running" else {})
 
 
-@server.tool(annotations=READ_ONLY)
-def get_check(id: str, detail: Literal["summary", "findings", "full"] = "findings") -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def get_check(id: str, detail: Literal["summary", "findings", "full"] = "findings") -> dict[str, Any]:
     """A check's result by job id (from check_model) or report id. detail: summary (headline, counts, top five),
     findings (every finding with evidence and next steps; the default), or full (every section's raw data)."""
     if id in check.JOBS:
@@ -116,8 +116,8 @@ def get_check(id: str, detail: Literal["summary", "findings", "full"] = "finding
         return {"error": f"no check or job {id!r}; list_checks shows the reports there are"}
 
 
-@server.tool(annotations=READ_ONLY)
-def list_checks(limit: int = 10) -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def list_checks(limit: int = 10) -> dict[str, Any]:
     """Checks run before, newest first: id, model, headline and counts."""
     rows = []
     for folder in sorted(check.REPORTS.glob("*/report.json"), reverse=True)[:max(1, limit)]:
@@ -130,8 +130,8 @@ def list_checks(limit: int = 10) -> dict:
     return {"checks": rows}
 
 
-@server.tool(annotations=READ_ONLY)
-def scan_files(path: str) -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def scan_files(path: str) -> dict[str, Any]:
     """Code that runs when the model folder `path` is loaded or used: what each pickle would import, custom code under
     trust_remote_code (risky calls by file and line), shipped wheels, chat templates reaching Python internals,
     Keras Lambda layers, malformed safetensors. Reads bytes only."""
@@ -139,15 +139,15 @@ def scan_files(path: str) -> dict:
     return {k: r[k] for k in ("name", "path", "files", "bytes", "weight_formats", "top", "findings")}
 
 
-@server.tool(annotations=READ_ONLY)
-def diff_files(base: str, candidate: str) -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def diff_files(base: str, candidate: str) -> dict[str, Any]:
     """What `candidate` changed outside its weights against `base` (both folders): chat template (diff and the text
     it adds), tokenizer (by the ids it gives probe texts), config, generation defaults, files only one side has."""
     return filediff.compare(Path(base).expanduser(), Path(candidate).expanduser())
 
 
-@server.tool(annotations=READ_ONLY)
-def fingerprint_model(candidate: str, roots: list[str] | None = None) -> dict:
+@server.tool(annotations=READ_ONLY, structured_output=True)
+def fingerprint_model(candidate: str, roots: list[str] | None = None) -> dict[str, Any]:
     """Which local model `candidate` comes from: weight correlation with every local model of its architecture, with
     a per-layer profile (a full fine-tune moves every layer a little, a targeted edit a few), and the base its model
     card claims."""
