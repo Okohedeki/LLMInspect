@@ -175,7 +175,7 @@ def _sha(path: Path) -> str:
 def compare_files(base: Path, cand: Path) -> dict:
     """Files only one side has, weights left out (the weight scan compares those)."""
     names = lambda f: {p.relative_to(f).as_posix() for p in f.rglob("*") if p.is_file() and not p.name.startswith(".")
-                       and p.suffix.lower() not in WEIGHTS and ".cache" not in p.parts}
+                       and p.suffix.lower() not in WEIGHTS and ".cache" not in p.relative_to(f).parts}
     a, b = names(base), names(cand)
     return {"only_candidate": sorted(b - a), "only_base": sorted(a - b)}
 

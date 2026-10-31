@@ -112,3 +112,18 @@ def test_real_tokenizers_are_compared_by_what_they_do(tmp_path):
     r = fd.compare(base, swapped)
     assert r["tokenizer"]["vocab"]["renumbered"] == 2 and r["tokenizer"]["encodes_differently"]
     assert r["signals"][0]["section"] == "tokenizer" and r["signals"][0]["level"] == "high"
+
+
+def test_models_stored_under_a_cache_folder_keep_their_files(tmp_path):
+    """Only a .cache folder inside the model is bookkeeping; one the model sits in is not."""
+    root = tmp_path / ".cache" / "models"
+    root.mkdir(parents=True)
+    base = root / "base"
+    base.mkdir()
+    (base / "config.json").write_text(json.dumps({"model_type": "llama"}))
+    cand = tmp_path / "cand"
+    cand.mkdir()
+    (cand / "config.json").write_text(json.dumps({"model_type": "llama"}))
+    (cand / ".cache").mkdir()
+    (cand / ".cache" / "download.lock").write_text("")
+    assert fd.compare(base, cand)["files"] == {"only_candidate": [], "only_base": []}
