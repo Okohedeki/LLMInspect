@@ -73,7 +73,8 @@ class DecodeGraphs:
 
     @staticmethod
     def available(subject) -> bool:
-        return subject.device.type == "cuda" and subject.model.config._attn_implementation in ALL_ATTENTION_FUNCTIONS
+        return (subject.device.type == "cuda" and subject.model.config._attn_implementation in ALL_ATTENTION_FUNCTIONS
+                and not getattr(subject, "placement", None))  # a split model's CPU-side experts can't be captured
 
     def describe(self) -> dict:
         return {"on": self.off is None and bool(self.graphs), "off": self.off, "graphs": len(self.graphs),

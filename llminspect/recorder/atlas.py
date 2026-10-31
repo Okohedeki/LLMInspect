@@ -31,6 +31,7 @@ import math
 import numpy as np
 import torch
 
+from .experts import down_column, down_norms, down_project, read_norms, read_project, read_row
 from .neurons import TOP, label
 from .tracing import Busy
 from .workbench import _reference_ids
@@ -115,7 +116,7 @@ class Atlas:
         nm = self.rec.neurons
         note, available = "", True
         if name == "write":
-            values = {i: nm.mlp(i).down.weight.detach().float().norm(dim=0).cpu() for i in self._dense()}
+            values = {i: down_norms(nm.mlp(i).down).cpu() for i in self._dense()}
             out = quantize(values)
             note = "‖W_down[:, n]‖: how much the neuron writes per unit of activation (weights only)"
         elif name in ("spread", "mean"):
@@ -204,7 +205,7 @@ class Atlas:
         """Direct weight-path links of one neuron: later neurons that read its write, earlier ones whose write it reads."""
         nm = self.rec.neurons
         mlp = nm.check(layer, n)
-        w = mlp.down.weight[:, n].detach().float()
+        w = down_column(mlp.down, n)
         w = w / w.norm().clamp_min(1e-12)
         out_rows, in_rows = [], []
         for j in self._dense():
@@ -214,20 +215,18 @@ class Atlas:
                 for lin, kind in ((m.up, "up"), (m.gate, "gate")):
                     if lin is None:
                         continue
-                    W = lin.weight.detach().float() * gain[None]
-                    c = (W @ w) / W.norm(dim=1).clamp_min(1e-12)
+                    c = read_project(lin, gain * w) / read_norms(lin, gain).clamp_min(1e-12)
                     v, idx = c.abs().topk(min(TOP * 2, len(c)))
                     out_rows += [(float(c[i]), j, int(i), kind) for i in idx.tolist()]
             elif j < layer:
                 gain = nm._gain(mlp, layer)
-                D = m.down.weight.detach().float()
-                D = D / D.norm(dim=0, keepdim=True).clamp_min(1e-12)
+                norms = down_norms(m.down).clamp_min(1e-12)
                 for lin, kind in ((mlp.up, "up"), (mlp.gate, "gate")):
                     if lin is None:
                         continue
-                    r = lin.weight[n].detach().float() * gain
+                    r = read_row(lin, n) * gain
                     r = r / r.norm().clamp_min(1e-12)
-                    c = r @ D
+                    c = down_project(m.down, r) / norms
                     v, idx = c.abs().topk(min(TOP * 2, len(c)))
                     in_rows += [(float(c[i]), j, int(i), kind) for i in idx.tolist()]
 

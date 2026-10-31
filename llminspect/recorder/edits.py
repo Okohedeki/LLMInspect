@@ -301,6 +301,7 @@ def attention_heads(attn: nn.Module | None, d_model: int, config=None) -> tuple[
 @torch.no_grad()
 def remove_from_rows(w: torch.Tensor, v: torch.Tensor, a: float) -> None:
     """Rows of w are residual vectors (embeddings) or readers (W[out, d]): w -= a (w v) v^T."""
+    v = v.to(w.device)  # a split model keeps some experts on the CPU
     for s in range(0, w.shape[0], ROW_CHUNK):
         blk = w[s:s + ROW_CHUNK].float()
         blk -= a * torch.outer(blk @ v, v)
@@ -310,6 +311,7 @@ def remove_from_rows(w: torch.Tensor, v: torch.Tensor, a: float) -> None:
 @torch.no_grad()
 def remove_from_output(w: torch.Tensor, v: torch.Tensor, a: float) -> None:
     """w[d, in] writes to the residual: w -= a v (v^T w)."""
+    v = v.to(w.device)
     for s in range(0, w.shape[1], ROW_CHUNK):
         blk = w[:, s:s + ROW_CHUNK].float()
         blk -= a * torch.outer(v, v @ blk)

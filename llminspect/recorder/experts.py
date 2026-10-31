@@ -34,6 +34,7 @@ import torch.nn.functional as F
 from torch import nn
 
 ATTR = "_llminspect_tap"
+HOME = "_llminspect_home"  # where the rest of a split model runs, when these experts sit on the CPU (placement.py)
 
 
 class Layout:
@@ -102,7 +103,12 @@ class ExpertTap(nn.Module):
 
     @property
     def weight(self) -> torch.Tensor:
-        return self.flat(self.param.detach())
+        """[d, experts · width], where the rest of the model runs (readers do their math there)."""
+        return self.flat(self.param.detach()).to(_home(self.experts))
+
+
+def _home(experts: nn.Module) -> torch.device:
+    return getattr(experts, HOME, None) or experts.down_proj.device
 
 
 class ExpertRows:
@@ -125,10 +131,66 @@ class ExpertRows:
 
     @property
     def weight(self) -> torch.Tensor:
-        return self.flat(self.param.detach())
+        return self.flat(self.param.detach()).to(_home(self.experts))
 
     def register_forward_pre_hook(self, fn):
         return self.block.register_forward_pre_hook(fn)  # the block's input is what every expert reads
+
+
+# Reads of a layer's down weight that need only a small result. On fused experts they work one expert at a
+# time where the weights live (the CPU, for a split model's offloaded experts) and return the result
+# where the rest of the model runs; `down` is a dense nn.Linear or an ExpertTap.
+
+def down_column(down, n: int) -> torch.Tensor:
+    """W_down[:, n] in fp32: neuron n's write."""
+    if isinstance(down, ExpertTap):
+        e, j = divmod(n, down.width)
+        return down.flat(down.param.detach()[e:e + 1])[:, j].float().to(_home(down.experts))
+    return down.weight[:, n].detach().float()
+
+
+def down_norms(down) -> torch.Tensor:
+    """‖W_down[:, n]‖ for every neuron, fp32."""
+    if isinstance(down, ExpertTap):
+        p = down.param.detach()
+        return torch.cat([down.flat(p[e:e + 1]).float().norm(dim=0) for e in range(down.n)]).to(_home(down.experts))
+    return down.weight.detach().float().norm(dim=0)
+
+
+def down_project(down, u: torch.Tensor) -> torch.Tensor:
+    """u @ W_down in fp32: how much each neuron's write points along u (..., d)."""
+    if isinstance(down, ExpertTap):
+        p = down.param.detach()
+        v = u.float().to(p.device)
+        return torch.cat([v @ down.flat(p[e:e + 1]).float() for e in range(down.n)], dim=-1).to(u.device)
+    return u @ down.weight.float()
+
+
+def read_row(lin, n: int) -> torch.Tensor:
+    """Row n of a gate or up projection in fp32: what neuron n reads. `lin` is an nn.Linear or ExpertRows."""
+    if isinstance(lin, ExpertRows):
+        e, j = divmod(n, lin.width)
+        return lin.flat(lin.param.detach()[e:e + 1])[j].float().to(_home(lin.experts))
+    return lin.weight[n].detach().float()
+
+
+def read_norms(lin, gain: torch.Tensor | None = None) -> torch.Tensor:
+    """‖W[n] ⊙ gain‖ for every row of a gate or up projection (gain: a norm's, (d,); none: 1), fp32."""
+    if isinstance(lin, ExpertRows):
+        p = lin.param.detach()
+        g = 1.0 if gain is None else gain.float().to(p.device)
+        return torch.cat([(lin.flat(p[e:e + 1]).float() * g).norm(dim=1) for e in range(p.shape[0])]).to(_home(lin.experts))
+    W = lin.weight.detach().float()
+    return (W if gain is None else W * gain[None]).norm(dim=1)
+
+
+def read_project(lin, w: torch.Tensor) -> torch.Tensor:
+    """W @ w in fp32: how much each row of a gate or up projection reads along w (d,)."""
+    if isinstance(lin, ExpertRows):
+        p = lin.param.detach()
+        v = w.float().to(p.device)
+        return torch.cat([lin.flat(p[e:e + 1]).float() @ v for e in range(p.shape[0])]).to(w.device)
+    return lin.weight.detach().float() @ w
 
 
 def column_major(experts: nn.Module, d: int) -> bool:
@@ -171,7 +233,8 @@ def tap(experts: nn.Module, block: nn.Module, d: int) -> ExpertTap:
             if bias is not None:  # the expert's own bias, weighted like its neurons but not one of them
                 out.index_add_(0, tok, (bias[e] * w).to(out.dtype))
         shape = t.shape if t.shape and int(torch.tensor(t.shape).prod()) == hidden.shape[0] else (1, hidden.shape[0])
-        row = t(row.reshape(*shape, n * width)).reshape(hidden.shape[0], n, width)
+        home = getattr(self, HOME, None) or row.device  # hooks see the row where the rest of the model runs
+        row = t(row.reshape(*shape, n * width).to(home)).to(hidden.device).reshape(hidden.shape[0], n, width)
         live = row.abs().amax(-1) > 0  # (tokens, experts); hooks may have written to any expert
         for e in live.any(0).nonzero().flatten().tolist():
             tok = live[:, e].nonzero().flatten()

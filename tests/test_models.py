@@ -100,6 +100,25 @@ def test_catalog_fits_against_the_gpu_budget(shelf):
                 if e["spec"] == str(shelf["beta"]))["fits"] is True
 
 
+def test_a_mixture_of_experts_too_big_for_the_gpu_is_offered_split(tmp_path):
+    """Its experts can run on the CPU, so it fits when the rest does (placement.split)."""
+    import torch
+    from safetensors.torch import save_file
+    moe = tmp_path / "models" / "moe"
+    moe.mkdir(parents=True)
+    (moe / "config.json").write_text(json.dumps({"model_type": "mixtral", "num_local_experts": 4, "num_hidden_layers": 1}))
+    (moe / "tokenizer.json").symlink_to(TINY / "tokenizer.json")
+    save_file({"model.embed_tokens.weight": torch.zeros(1024, dtype=torch.bfloat16),                    # 2 KB
+               "model.layers.0.mlp.experts.down_proj": torch.zeros(8 * 1024 ** 2, dtype=torch.bfloat16)},  # 16 MB
+              str(moe / "model.safetensors"))
+    entry = lambda budget: next(e for e in catalog.scan([tmp_path / "models"], budget_bytes=budget) if e["name"] == "moe")
+    split = entry(catalog.HEADROOM + 1024 ** 2)  # room for the rest, not the experts
+    assert split["fits"] is True and split["split"] is True
+    whole = entry(catalog.HEADROOM + 64 * 1024 ** 2)
+    assert whole["fits"] is True and whole["split"] is False
+    assert entry(catalog.HEADROOM)["fits"] is False
+
+
 def test_weight_estimate_counts_what_the_text_model_loads(tmp_path):
     """Vision towers and multi-token-prediction heads stay on disk; fp32 weights load as bf16."""
     import torch

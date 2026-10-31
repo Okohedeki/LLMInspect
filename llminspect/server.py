@@ -90,7 +90,7 @@ def _load(spec: str | None = None) -> bool:
         if settings.gpu_fraction and settings.device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.set_per_process_memory_fraction(min(max(settings.gpu_fraction, 0.05), 1.0))
         _step(f"loading {display_name(spec)}")
-        subject = Subject(spec, device=settings.device)
+        subject = Subject(spec, device=settings.device, gpu_fraction=settings.gpu_fraction)
         _step(f"mapping {subject.name}'s units and edges (cached after the first load)")
         rec = Recorder(subject, RunStore(settings.data_dir, settings.disk_budget_gb), settings, hub.publish)
         _step("building direction bank")
@@ -388,9 +388,10 @@ async def switch_model(body: dict):
         _switching.release()
         raise HTTPException(409, "the model is generating; switch when the request finishes")
     budget = _gpu_budget()
-    if budget is not None and entry.get("need_bytes") and entry["need_bytes"] > budget and not body.get("force"):
+    need = entry.get("split_need_bytes") or entry.get("need_bytes")  # a mixture of experts can load split
+    if budget is not None and need and need > budget and not body.get("force"):
         _switching.release()
-        raise HTTPException(400, f"{entry['name']} needs about {entry['need_bytes'] / catalog.GIB:.1f} GB of GPU "
+        raise HTTPException(400, f"{entry['name']} needs about {need / catalog.GIB:.1f} GB of GPU "
                                  f"memory and about {budget / catalog.GIB:.1f} GB would be free after unloading "
                                  "the current model. Close other GPU apps or choose a smaller model.")
     del rec  # the switch thread must hold the only reference

@@ -210,10 +210,11 @@ UNLOADED_PARTS = {"visual", "vision_tower", "vision_model", "audio_tower", "audi
 _FLOAT_BYTES = {"F64": 8, "F32": 4, "BF16": 2, "F16": 2}
 
 
-def weight_bytes(path, load_bytes_per_float: int = 2) -> tuple[int, int]:
+def weight_bytes(path, load_bytes_per_float: int = 2, keep=None) -> tuple[int, int]:
     """(bytes of safetensors on disk, bytes the text model takes once loaded) for a checkpoint folder.
     Read from the safetensors headers: unloaded parts are skipped and float weights are counted at
-    the size they load at (bf16 by default). Falls back to file size where a header can't be read."""
+    the size they load at (bf16 by default). Falls back to file size where a header can't be read.
+    keep(name), when given, picks which tensors count as loaded."""
     total = loaded = 0
     for f in Path(path).glob("*.safetensors"):
         size = f.stat().st_size
@@ -228,7 +229,7 @@ def weight_bytes(path, load_bytes_per_float: int = 2) -> tuple[int, int]:
             loaded += size
             continue
         for name, meta in header.items():
-            if name == "__metadata__" or UNLOADED_PARTS.intersection(name.split(".")[:3]):
+            if name == "__metadata__" or UNLOADED_PARTS.intersection(name.split(".")[:3]) or (keep and not keep(name)):
                 continue
             a, b = meta["data_offsets"]
             item = _FLOAT_BYTES.get(meta.get("dtype"))
@@ -236,26 +237,21 @@ def weight_bytes(path, load_bytes_per_float: int = 2) -> tuple[int, int]:
     return total, loaded
 
 
-def _check_vram(path: str, device: str, headroom_gb: float = 2.5) -> None:
-    """Refuse to load when the weights won't fit. On Windows the driver would otherwise spill
-    into system memory and every forward pass would crawl."""
-    weights = weight_bytes(path)[1] if Path(path).is_dir() else 0
-    if not weights or not device.startswith("cuda") or not torch.cuda.is_available():
-        return
-    free, _ = torch.cuda.mem_get_info()
-    need = weights + headroom_gb * 1024 ** 3
-    if free < need:
-        raise RuntimeError(
-            f"not enough free GPU memory: {free / 1024 ** 3:.1f} GB free, about {need / 1024 ** 3:.1f} GB needed. "
-            "Close other GPU apps (image generators, local LLM servers) or choose a smaller model.")
-
-
 class Subject:
     """The model under study plus the handles the recorder needs."""
 
-    def __init__(self, spec: str, dtype=torch.bfloat16, device: str = "cuda", name: str | None = None):
+    def __init__(self, spec: str, dtype=torch.bfloat16, device: str = "cuda", name: str | None = None,
+                 gpu_fraction: float = 0.0, gpu_budget: int | None = None):
+        """gpu_fraction caps the share of the GPU the weights may take (0: what is free); gpu_budget, in
+        bytes of weights, overrides both. A mixture of experts too big for that is split (placement.py)."""
         path, self.provenance = prepare(spec, dtype)
-        _check_vram(path, device)
+        self.placement: dict | None = None  # what went on the GPU and the CPU, when the model is split
+        load_on = device
+        if device.startswith("cuda") and torch.cuda.is_available():
+            from .placement import budget
+            room = gpu_budget if gpu_budget is not None else budget(gpu_fraction)
+            if (weight_bytes(path, dtype.itemsize)[1] if Path(path).is_dir() else 0) > room:
+                load_on = "cpu"  # then split across the GPU and the CPU, once its experts are known
         self.spec = spec
         # LLMINSPECT_MODEL_NAME names the model LLMINSPECT_MODEL points at, not one switched to later.
         env_name = os.environ.get("LLMINSPECT_MODEL_NAME") if spec == os.environ.get("LLMINSPECT_MODEL") else None
@@ -264,24 +260,29 @@ class Subject:
         self.tokenizer = AutoTokenizer.from_pretrained(path)
         try:
             self.model = AutoModelForCausalLM.from_pretrained(
-                path, dtype=dtype, device_map=device, attn_implementation="sdpa")
+                path, dtype=dtype, device_map=load_on, attn_implementation="sdpa")
         except ValueError as exc:  # an architecture without SDPA attention (gpt-oss, with its attention sinks)
             if "scaled_dot_product_attention" not in str(exc):
                 raise
             self.model = AutoModelForCausalLM.from_pretrained(
-                path, dtype=dtype, device_map=device, attn_implementation="eager")
+                path, dtype=dtype, device_map=load_on, attn_implementation="eager")
         self.model.eval()
-        self.device = next(self.model.parameters()).device
         self.layers = _first_attr(self.model, ["model.layers", "model.language_model.layers",
                                                "language_model.model.layers", "transformer.h"])
-        if self.device.type == "cpu":  # gpt-oss's experts multiply x @ W, which bf16 on a CPU does slowly row-major
+        d = self.model.config.get_text_config().hidden_size
+        if load_on != device:
+            from .placement import split
+            self.placement = split(self.model, self.layers, d, device, room)
+            print(f"[llminspect] split across GPU and CPU: experts of {len(self.placement['experts_on_gpu'])} layers "
+                  f"on the GPU, {len(self.placement['experts_on_cpu'])} on the CPU", flush=True)
+        elif device == "cpu":  # gpt-oss's experts multiply x @ W, which bf16 on a CPU does slowly row-major
             from .edits import MLP_NAMES, _child, find_experts
             from .experts import column_major
-            d = self.model.config.get_text_config().hidden_size
             for layer in self.layers:
                 ex = find_experts(_child(layer, MLP_NAMES), d)
                 if ex is not None:
                     column_major(ex, d)
+        self.device = self.model.get_input_embeddings().weight.device  # where the residual stream runs
         self.norm = _first_attr(self.model, ["model.norm", "model.language_model.norm",
                                              "language_model.model.norm", "transformer.ln_f"])
         self.lm_head = self.model.get_output_embeddings()
@@ -325,7 +326,7 @@ class Subject:
         return {"name": self.name, "spec": self.spec, "n_layers": self.n_layers, "d_model": self.d_model,
                 "vocab_size": self.vocab_size, "dtype": self.dtype, "provenance": self.provenance,
                 "architecture": type(self.model).__name__, "layer_types": self.layer_types,
-                "croppable_cache": self.croppable_cache}
+                "croppable_cache": self.croppable_cache, "placement": self.placement}
 
 
 if __name__ == "__main__":

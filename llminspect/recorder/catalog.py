@@ -4,7 +4,8 @@ LLMInspect never downloads a model here. The catalog lists Hugging Face checkpoi
 config.json beside safetensors weights) under LLMInspect's model cache, the Hugging Face hub cache
 and any folders in LLMINSPECT_MODEL_DIRS, plus Ollama tags, which are dequantized to bf16 once on
 first load (model.prepare). Each entry carries the memory estimate the loader itself checks
-(model._check_vram: weight bytes plus headroom), so the picker can say up front what won't fit.
+(weight bytes plus headroom), so the picker can say up front what won't fit. A mixture of experts
+also carries what it needs split (placement.py): everything but its experts, plus headroom.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from .model import CACHE, _slug, display_name, ollama_roots, weight_bytes
 
-HEADROOM = 2.5 * 1024 ** 3  # the loader's margin over the weights, in bytes (model._check_vram)
+HEADROOM = 2.5 * 1024 ** 3  # the loader's margin over the weights, in bytes (placement.HEADROOM)
 GIB = 1024 ** 3
 TOKENIZER_FILES = ("tokenizer.json", "tokenizer.model", "vocab.json", "tokenizer_config.json")
 
@@ -81,7 +82,8 @@ def _checkpoint(path: Path, types) -> dict | None:
         notes.append("No tokenizer files next to the weights, so this folder can't be loaded.")
     if cfg.get("quantization_config"):
         notes.append("Quantized checkpoint: tracing and weight edits assume dense weights.")
-    if any(k in text for k in ("num_experts", "num_local_experts", "n_routed_experts")):
+    moe = any(k in text for k in ("num_experts", "num_local_experts", "n_routed_experts"))
+    if moe:
         notes.append("Mixture-of-experts MLPs: every expert's neurons are read and edited; reads run the experts in a slower plain loop, a shared expert's neurons can be edited but not read, and an expert neuron's z-scores run large, since it fires on few tokens.")
     if loaded / 2 < 1e8:
         notes.append("Very small model (under 100M parameters): good for trying the tools, not for findings.")
@@ -94,7 +96,9 @@ def _checkpoint(path: Path, types) -> dict | None:
         "d_model": text.get("hidden_size") or text.get("n_embd"),
         "params": loaded / 2,  # loaded as bf16
         "disk_bytes": size,
-        "need_bytes": loaded + HEADROOM,  # what the loader checks against free GPU memory (model._check_vram)
+        "need_bytes": loaded + HEADROOM,  # what the loader checks against free GPU memory
+        # split, only the parts every token uses must be on the GPU (placement.split)
+        "split_need_bytes": weight_bytes(path, keep=lambda n: ".experts." not in n)[1] + HEADROOM if moe else None,
         "supported": _supported(types, cfg.get("model_type"), text.get("model_type")) if has_tokenizer else False,
         "notes": notes,
     }
@@ -156,8 +160,11 @@ def scan(extra_dirs: list[Path] | None = None, current: str | None = None,
         if entry["spec"] in seen_specs:
             return
         seen_specs.add(entry["spec"])
-        need = entry.get("need_bytes")
+        need, split_need = entry.get("need_bytes"), entry.pop("split_need_bytes", None)
         entry["fits"] = None if budget_bytes is None or need is None else bool(need <= budget_bytes)
+        entry["split"] = bool(entry["fits"] is False and split_need and split_need <= budget_bytes)
+        if entry["split"]:  # loads with some layers' experts on the CPU
+            entry["fits"] = True
         entry["need_gb"] = round(need / GIB, 1) if need else None
         entry["disk_gb"] = round(entry.pop("disk_bytes", 0) / GIB, 1) if entry.get("disk_bytes") else None
         entry["params_b"] = round(entry.pop("params") / 1e9, 2) if entry.get("params") else None

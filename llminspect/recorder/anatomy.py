@@ -331,7 +331,7 @@ class Anatomy:
                 units += [{"layer": lm.index, "kind": "head", "i": h, "size": hd, "norm": round(float(fro[h]), 4)}
                           for h in range(H)]
             if lm.centroids is not None:
-                sq = lm.down.weight.detach().float().square().sum(0)
+                sq = experts.down_norms(lm.down).square()
                 fro = torch.zeros(lm.n_clusters, device=sq.device).index_add_(0, lm.assign, sq).sqrt()
                 count = torch.bincount(lm.assign, minlength=lm.n_clusters)
                 dirs.append(lm.centroids)
@@ -568,7 +568,7 @@ class Anatomy:
                 W = o.weight.detach().float().view(d, H, hd)
                 lm.gram.copy_(torch.einsum("dhi,dhj->hij", W, W))
             if lm.wnorm is not None:
-                lm.wnorm.copy_(lm.down.weight.detach().float().norm(dim=0))
+                lm.wnorm.copy_(experts.down_norms(lm.down))
         with self._stats_lock:
             self._stats.clear()
 

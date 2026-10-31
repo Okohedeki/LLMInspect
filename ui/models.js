@@ -44,7 +44,8 @@ function render() {
       m.need_gb && d.budget_gb != null ? `needs ~${m.need_gb} GB` : null].filter(Boolean).map((t) => `<span class="chip">${esc(t)}</span>`).join("");
     const badge = m.current ? `<span class="pill ok">loaded</span>`
       : m.supported === false ? `<span class="pill warn">can't load</span>`
-        : m.fits === false ? `<span class="pill warn" title="${esc(budget)}">too big for this GPU</span>` : "";
+        : m.fits === false ? `<span class="pill warn" title="${esc(budget)}">too big for this GPU</span>`
+          : m.split ? `<span class="pill" title="Too big for the GPU whole: some layers' experts run on the CPU, which is slower">split GPU + CPU</span>` : "";
     const blocked = loading || M.sending || m.supported === false || m.fits === false;
     const action = m.current ? "" : `<button type="button" class="btn sm" data-i="${i}" ${blocked ? "disabled" : ""}>Load</button>`;
     const confirm = M.confirm === m.spec ? `<div class="mp-confirm" role="alert">

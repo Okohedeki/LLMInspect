@@ -68,7 +68,8 @@ show that a model is safe.
   - the scan's own limits.
 - **Work with your models.** Load Hugging Face checkpoints, local GGUF files or Ollama models, and
   switch between them from the UI. Reasoning models' thinking is recorded separately. GPU memory
-  can be capped so other apps keep running.
+  can be capped so other apps keep running, and a mixture-of-experts model too big for the GPU
+  runs split: the GPU holds what every token uses, and the experts that don't fit run on the CPU.
 
 Readouts are functional measurements, each labelled by how it was built. Nothing here measures
 experience.
@@ -187,6 +188,9 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
   index for spreads over a larger corpus.
 - On Windows/WSL, a full GPU slows down instead of failing, so leave headroom or set
   `LLMINSPECT_GPU_FRACTION`.
+- A split model is slower than one that fits: its CPU-side experts run at CPU speed, and decoding
+  isn't replayed from CUDA graphs. Dense models are not split; they load whole on the GPU or not at
+  all. Reads, edits and traces work the same on a split model.
 
 ## Layout
 

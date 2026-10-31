@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from llminspect.config import Settings
 from llminspect.recorder import checkpoints as ck
 from llminspect.recorder.edits import _child, EditStack, MLP_NAMES, mlp_neurons
-from llminspect.recorder.model import Subject
+from llminspect.recorder.model import Subject, weight_bytes
 from llminspect.recorder.session import Recorder
 from llminspect.recorder.store import RunStore
 
@@ -49,12 +49,27 @@ def save_model(folder: Path, arch: str, **override) -> Path:
     return folder
 
 
-@pytest.fixture(scope="module", params=list(ARCHS))
+SPLIT = [f"{a}@split" for a in ARCHS] if torch.cuda.is_available() else []
+
+
+def split_budget(folder: Path) -> int:
+    """Bytes of GPU room for everything but the experts, plus layer 0's experts: layer 1's stay on the CPU."""
+    rest = weight_bytes(folder, 4, keep=lambda n: ".experts." not in n)[1]
+    first = weight_bytes(folder, 4, keep=lambda n: ".experts." in n and ".layers.0." in n)[1]
+    return rest + first + 4096
+
+
+@pytest.fixture(scope="module", params=list(ARCHS) + SPLIT)
 def rec(request, tmp_path_factory):
-    root = tmp_path_factory.mktemp(request.param)
-    folder = save_model(root / "base", request.param)
-    subject = Subject(str(folder), dtype=torch.float32, device="cpu")
-    settings = Settings(model=str(folder), device="cpu", anatomy=True, anatomy_clusters=8, graph_decode=False, data_dir=root)
+    """A recorder on each tiny model, on the CPU, and (with a GPU) split: the GPU holds all but layer 1's experts."""
+    arch, split = request.param.split("@")[0], request.param.endswith("@split")
+    root = tmp_path_factory.mktemp(arch)
+    folder = save_model(root / "base", arch)
+    device = "cuda" if split else "cpu"
+    subject = Subject(str(folder), dtype=torch.float32, device=device, gpu_budget=split_budget(folder) if split else None)
+    assert not split or subject.placement == {"experts_on_gpu": [0], "experts_on_cpu": [1],
+                                              "gpu_weights_gb": subject.placement["gpu_weights_gb"]}
+    settings = Settings(model=str(folder), device=device, anatomy=True, anatomy_clusters=8, graph_decode=False, data_dir=root)
     r = Recorder(subject, RunStore(root / "data", settings.disk_budget_gb), settings, lambda m: None)
     r.folder = folder
     return r
@@ -84,10 +99,15 @@ def tokens(n=12):
     return torch.randn(n, D, generator=torch.Generator().manual_seed(7))
 
 
+def home(block) -> torch.device:
+    """Where a block runs: its router's device (a split model may keep its experts on the CPU)."""
+    return next(p for n, p in block.named_parameters() if not n.startswith("experts.")).device
+
+
 def run(block, x):
     with torch.no_grad():
-        out = block(x[None])
-    return (out[0] if isinstance(out, tuple) else out)[0]  # some blocks also return their router scores
+        out = block(x[None].to(home(block)))
+    return (out[0] if isinstance(out, tuple) else out)[0].cpu()  # some blocks also return their router scores
 
 
 def test_every_expert_neuron_is_numbered_in_one_row(rec):
@@ -194,7 +214,8 @@ def experts_out(rec, x, layer=0):
     shared = getattr(mlp(rec, layer), "shared_expert", None)
     if shared is not None:
         with torch.no_grad():
-            out = out - torch.sigmoid(mlp(rec, layer).shared_expert_gate(x)) * shared(x)
+            x = x.to(home(mlp(rec, layer)))
+            out = out - (torch.sigmoid(mlp(rec, layer).shared_expert_gate(x)) * shared(x)).cpu()
     return out
 
 
@@ -208,27 +229,29 @@ def test_the_tap_leaves_the_output_as_it_was(rec):
         h.remove()
 
 
-def zeroed(rec, x):
+def zeroed(rec, x, layer=0):
     """The experts' output with every neuron's activation zeroed: what the experts' own biases write."""
-    h = rec.neurons.mlp(0).down.register_forward_pre_hook(lambda mod, a: (torch.zeros_like(a[0]),))
+    h = rec.neurons.mlp(layer).down.register_forward_pre_hook(lambda mod, a: (torch.zeros_like(a[0]),))
     try:
-        return experts_out(rec, x)
+        return experts_out(rec, x, layer)
     finally:
         h.remove()
 
 
-def test_the_row_of_activations_times_the_down_weight_is_the_experts_output(rec):
+@pytest.mark.parametrize("layer", [0, 1])  # split, layer 1's experts are on the CPU
+def test_the_row_of_activations_times_the_down_weight_is_the_experts_output(rec, layer):
     x, seen = tokens(), []
-    m = rec.neurons.mlp(0)
+    m = rec.neurons.mlp(layer)
     h = m.down.register_forward_pre_hook(lambda mod, a: seen.append(a[0].detach()))
     try:
-        expect = experts_out(rec, x)
+        expect = experts_out(rec, x, layer)
     finally:
         h.remove()
     row = seen[0][0]
+    assert row.device == rec.s.device  # hooks see the row where the rest of the model runs
     assert row.shape == (len(x), EXPERTS * WIDTH)
     assert ((row.reshape(len(x), EXPERTS, WIDTH).abs().amax(-1) > 0).sum(-1) == 2).all()  # two experts per token
-    assert torch.allclose(row @ m.down.weight.T + zeroed(rec, x), expect, atol=1e-5)
+    assert torch.allclose((row @ m.down.weight.T).cpu() + zeroed(rec, x, layer), expect, atol=1e-5)
 
 
 def test_zeroing_the_row_leaves_only_the_experts_biases(rec):
@@ -315,3 +338,24 @@ def test_transposed_experts_on_the_cpu_are_stored_column_major_and_save_as_they_
     back = AutoModelForCausalLM.from_pretrained(tmp_path / "out", dtype=torch.float32).state_dict()
     for key, t in plain.state_dict().items():
         assert torch.equal(back[key], t), key
+
+
+@pytest.mark.parametrize("layer", [0, 1])
+def test_narrow_down_reads_match_the_full_weight(rec, layer):
+    from llminspect.recorder.experts import down_column, down_norms, down_project
+    down = rec.neurons.mlp(layer).down
+    W, u = down.weight.float(), unit(3).to(rec.s.device)
+    n = 2 * WIDTH + 5
+    assert torch.allclose(down_column(down, n), W[:, n], atol=1e-6)
+    assert torch.allclose(down_norms(down), W.norm(dim=0), atol=1e-5)
+    assert torch.allclose(down_project(down, u), u @ W, atol=1e-5)
+    assert down_project(down, u).device == rec.s.device
+
+
+def test_narrow_reader_reads_match_the_full_weight(rec):
+    from llminspect.recorder.experts import read_norms, read_project, read_row
+    up = rec.neurons.mlp(1).up
+    W, w, g = up.weight.float(), unit(4).to(rec.s.device), torch.rand(D).to(rec.s.device) + 0.5
+    assert torch.allclose(read_row(up, WIDTH + 2), W[WIDTH + 2], atol=1e-6)
+    assert torch.allclose(read_norms(up, g), (W * g[None]).norm(dim=1), atol=1e-5)
+    assert torch.allclose(read_project(up, w), W @ w, atol=1e-5)

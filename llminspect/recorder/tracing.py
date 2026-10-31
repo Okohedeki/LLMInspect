@@ -41,6 +41,8 @@ import torch
 from torch import nn
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
+from .experts import down_norms, down_project
+
 CACHE_SIZE = 6
 TOP_UNITS = 24
 WEIGHTS = ("current", "original")
@@ -319,7 +321,7 @@ class Tracer:
 
     @torch.no_grad()
     def _neuron_contrib(self, lm, a: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
-        return a * (u @ lm.down.weight.float())
+        return a * down_project(lm.down, u)
 
     def explain(self, run_id: str, t: int, target=None, weights: str = "current") -> dict:
         run = self._run(run_id)
@@ -407,7 +409,7 @@ class Tracer:
         a = cap.mlp_in[lm.index][idx]
         cn = self._neuron_contrib(lm, cap.mlp_in[lm.index], self._direction(cap, tid))[idx]
         # lm.wnorm describes the weights as applied; with the edits lifted, read the norms directly.
-        wn = lm.down.weight.float()[:, idx].norm(dim=0) if lifted or lm.wnorm is None else lm.wnorm[idx]
+        wn = down_norms(lm.down)[idx] if lifted or lm.wnorm is None else lm.wnorm[idx]
         rows = sorted(zip(idx.tolist(), a.tolist(), cn.tolist(), wn.tolist()), key=lambda r: -abs(r[2]))
         # Gated MLP activations are almost never exactly zero, so "active" counts the neurons that
         # carry 90% of the cluster's write (sum of |activation| x output-weight norm).

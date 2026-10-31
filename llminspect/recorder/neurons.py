@@ -140,7 +140,7 @@ class Neurons:
 
     def write(self, layer: int, n: int) -> torch.Tensor:
         """W_down[:, n] in fp32."""
-        return self.check(layer, n).down.weight[:, n].detach().float()
+        return experts.down_column(self.check(layer, n).down, n)
 
     @contextlib.contextmanager
     def _model(self):
@@ -375,9 +375,9 @@ class Neurons:
         top = a.topk(min(FIRE, len(a))).indices
         xh = cal["xhat"][layer][top]
         gain = self._gain(mlp, layer)
-        up_w = mlp.up.weight[n].detach().float()
+        up_w = experts.read_row(mlp.up, n)
         if mlp.gate is not None:  # act = silu(gate·x̂) × (up·x̂), linearized at each position
-            gate_w = mlp.gate.weight[n].detach().float()
+            gate_w = experts.read_row(mlp.gate, n)
             g, u = xh @ gate_w, xh @ up_w
             sg = torch.sigmoid(g)
             dsilu = sg * (1 + g * (1 - sg))
@@ -389,8 +389,7 @@ class Neurons:
         for i in cal["acts"]:
             if i >= layer:
                 continue
-            down = self.mlp(i).down.weight.detach().float()  # (d, neurons)
-            c = (cal["acts"][i][top].float() * (J @ down)).mean(0)  # (neurons,)
+            c = (cal["acts"][i][top].float() * experts.down_project(self.mlp(i).down, J)).mean(0)  # (neurons,)
             vals, idx = c.abs().topk(min(TOP, len(c)))
             rows += [(float(c[j]), i, int(j)) for j in idx]
         rows.sort(key=lambda r: -abs(r[0]))
