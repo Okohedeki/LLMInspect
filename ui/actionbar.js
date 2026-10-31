@@ -207,6 +207,20 @@ export function defineVerbs(list, planned = []) {
   if (BARS.has(view)) render(view);
 }
 
+/** The action and step picked now: { verb, step } ids. */
+export const currentStep = () => ({ verb: V.cur?.id, step: V.cur?.steps[V.step]?.id });
+
+/** Go to a step of an action, picking the action first if another one is on. */
+export function openStep(verbId, stepId) {
+  if (V.cur?.id !== verbId) {
+    const verb = V.list.find((v) => v.id === verbId);
+    if (!verb) return;
+    V.cur = verb;
+    renderPicker();
+  }
+  goStep(Math.max(0, V.cur.steps.findIndex((s) => s.id === stepId)));
+}
+
 /** The actions and the planned ones, for the guide. */
 export const actionList = () => ({ list: V.list, planned: V.planned });
 
@@ -229,6 +243,7 @@ function goStep(i) {
   V.step = i;
   save();
   const s = verb.steps[i];
+  document.dispatchEvent(new CustomEvent("llminspect:step", { detail: { verb: verb.id, step: s.id } }));
   if (s.view !== view) show(s.view);
   else if (BARS.has(view)) render(view);
   // A step on a long screen (Tune, Watch's steering) brings its panel into view.

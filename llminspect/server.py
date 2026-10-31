@@ -743,6 +743,16 @@ async def check_report(rid: str):
         raise HTTPException(404, f"no check {rid}") from exc
 
 
+@app.get("/llminspect/check/reports/{rid}/map")
+async def check_report_map(rid: str):
+    """The checked model's layers, each lit by how far it moved from the base (check.layer_map)."""
+    try:
+        r = await asyncio.to_thread(check.load, Path(rid).name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"no check {rid}") from exc
+    return await asyncio.to_thread(check.layer_map, r)
+
+
 @app.get("/llminspect/check/reports/{rid}/html")
 async def check_report_html(rid: str, theme: str | None = None, embed: bool = False):
     """The check as a page; theme=dark|light and embed=true fit it inside the UI."""

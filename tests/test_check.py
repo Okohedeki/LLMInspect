@@ -92,6 +92,23 @@ def test_a_model_without_safetensors_is_checked_without_an_origin(tmp_path):
     assert r["base"] is None
 
 
+def test_the_layer_map_lights_the_edited_tensor(tmp_path):
+    """Vet's map: one attention and one MLP tensor per layer, each with its correlation to the base."""
+    base = tiny(tmp_path / "models" / "Org--real-base")
+    m = AutoModelForCausalLM.from_pretrained(base)
+    with torch.no_grad():
+        w = m.model.layers[2].mlp.down_proj.weight
+        w.add_(torch.randn_like(w) * w.float().std())
+    cand = tmp_path / "cand"
+    m.save_pretrained(cand)
+    lm = check.layer_map(check.run(cand, roots=[tmp_path / "models"]))
+    assert lm["base"] == "Org/real-base" and lm["base_is"] == "base" and [x["layer"] for x in lm["layers"]] == [0, 1, 2, 3]
+    moved = [(x["layer"], k) for x in lm["layers"] for k in ("attn", "mlp") if x[k]["corr"] < 0.99999]
+    assert moved == [(2, "mlp")] and lm["layers"][2]["mlp"]["tensor"].endswith("down_proj.weight") and lm["embed"]["corr"] == 1.0
+    alone = check.layer_map(check.run(cand))  # nothing to compare with: tensors, no correlations
+    assert alone["base"] is None and all(x["attn"]["corr"] is None for x in alone["layers"])
+
+
 def test_a_heavily_retrained_model_is_related_not_unrelated(tmp_path):
     """Retrained hard for a new task, a model keeps a little of its base: a note, not a broken claim."""
     base = tiny(tmp_path / "models" / "Org--real-base")

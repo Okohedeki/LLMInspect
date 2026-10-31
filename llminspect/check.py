@@ -404,6 +404,46 @@ def load(rid: str) -> dict:
     return json.loads((REPORTS / rid / "report.json").read_text(encoding="utf-8"))
 
 
+BLOCKS = {"attn": re.compile(r"(self_attn\.q_proj|attn\.c_attn|attention\.wq)\.weight$"),
+          "mlp": re.compile(r"(mlp\.down_proj|mlp\.c_proj|feed_forward\.w2)\.weight$")}
+
+
+def layer_map(report: dict) -> dict:
+    """The candidate's layers as the UI draws them: per layer, the attention and MLP tensor the fingerprint reads,
+    with its correlation to the base (or the closest local model) and, after a deep check, how much each layer
+    changed. Nothing is loaded: the values come from the fingerprint cache or the safetensors files."""
+    cand = Path(report["candidate"]["path"])
+    ref = report.get("base") or next(iter(report["sections"].get("origin", {}).get("matches") or []), None)
+    out = {"base": ref and display(model_name(ref["path"])), "base_is": "base" if report.get("base") else ref and "closest",
+           "layers": [], "embed": None, "deep": None}
+    if not cand.is_dir():
+        return out | {"error": f"the model folder isn't readable here: {cand}"}
+    sig = fingerprint.signature(cand)
+    if not sig:
+        return out | {"error": "no safetensors weights to map"}
+    corr = {}
+    if ref and Path(ref["path"]).is_dir():
+        corr = fingerprint.tensor_correlations(sig, fingerprint.signature(Path(ref["path"])))
+    elif ref:
+        out["base"], out["base_is"] = None, None
+    cell = lambda k: {"tensor": k, "shape": sig[k][0], "corr": None if k not in corr else round(corr[k], 5)}
+    layers: dict[int, dict] = {}
+    for k in sig:
+        m = re.match(r"layers?\.(\d+)\.", k)
+        if not m:
+            out["embed"] = cell(k)
+            continue
+        for block, rx in BLOCKS.items():
+            if rx.search(k):
+                layers.setdefault(int(m.group(1)), {})[block] = cell(k)
+    out["layers"] = [{"layer": n} | layers[n] for n in sorted(layers)]
+    w = (report["sections"].get("inside_weights") or {}).get("weights") or {}
+    if w.get("summary"):
+        out["deep"] = {"layers": {str(x["layer"]): x["max_rel"] for x in w["summary"].get("layers", [])},
+                       "neurons": (w.get("neurons") or {}).get("top", [])[:12]}
+    return out
+
+
 # ---- what's on this machine, and what was checked (the MCP server and the web UI both read these) --------
 
 def default_roots(extra=()) -> list[Path]:

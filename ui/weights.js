@@ -99,6 +99,9 @@ function readColors() {
   graph?.setColors(C);
 }
 
+/** The graph's colors, read from the theme now: Vet draws a vetted model's layers with them. */
+export function graphColors() { readColors(); return C; }
+
 // ---------------------------------------------------------------- half floats and bytes from the server
 const HALF = (() => {
   const t = new Float32Array(65536);

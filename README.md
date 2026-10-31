@@ -141,9 +141,10 @@ next. The steps run across five screens:
 - **Trace**: the conversation next to a graph of the model's heads and neuron clusters.
 - **Tune**: directions, weight edits, checkpoints, the deploy scan, side-by-side comparisons and export.
 - **Neurons**: the neuron atlas, neuron search, neuron cards, steering sweeps and knobs.
-- **Vet**: every model on this machine as a shelf, each cell sized by disk use and lit by its latest
-  check. Check one model or all of them, with the weight checks against the loaded model when it is
-  the base, and read the report in place: the same report `check_model` gives an agent.
+- **Vet**: four steps for a model you didn't train: open it safely (what loading it runs), its origin,
+  its edits and its behavior. The model is drawn like Trace's graph, each layer's attention and MLP
+  tensor lit by how far it moved from its base, so a targeted edit shows as one bright node. The
+  drawer gives each step's answer and findings: the same report `check_model` gives an agent.
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).

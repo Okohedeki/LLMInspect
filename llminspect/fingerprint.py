@@ -164,12 +164,17 @@ def _corr(a: list[float], b: list[float]) -> float:
     return num / den if den else (1.0 if a == b else 0.0)
 
 
+def tensor_correlations(cand: dict, ref: dict) -> dict[str, float]:
+    """{tensor: correlation} over the tensors both fingerprints have with one shape."""
+    return {k: _corr(cand[k][1], ref[k][1]) for k in cand if k in ref and cand[k][0] == ref[k][0]}
+
+
 def similarity(cand: dict, ref: dict) -> dict | None:
     """How a candidate's fingerprint compares with a reference's, over the tensors both have with one shape."""
-    shared = [k for k in cand if k in ref and cand[k][0] == ref[k][0]]
+    per = tensor_correlations(cand, ref)
+    shared = list(per)
     if not shared or len(shared) < 0.8 * max(len(cand), len(ref)):
         return None  # another architecture
-    per = {k: _corr(cand[k][1], ref[k][1]) for k in shared}
     identical = sum(cand[k][1] == ref[k][1] for k in shared)
     layer = lambda k: int(m.group(1)) if (m := re.search(r"layers?\.(\d+)\.", k)) else -1
     by_layer: dict[int, list[float]] = {}

@@ -55,26 +55,28 @@ export class WeightGraph {
     this.layerOf = new Uint16Array(U); this.kind = new Uint8Array(U);
     const maxSize = Math.max(1, ...atlas.units.filter((u) => u.kind === "cluster").map((u) => u.size));
     let headRows = 1, clusterRows = 1;
+    const cols = atlas.podCols || POD_COLS;  // a vetted model's layers have one node per pod
     this.pods = [];
     for (const l of atlas.layers) {
-      const cx = l.layer * COL, hr = Math.ceil(l.heads / POD_COLS), cr = Math.ceil(l.clusters / POD_COLS);
+      const cx = l.layer * COL, hr = Math.ceil(l.heads / cols), cr = Math.ceil(l.clusters / cols);
       headRows = Math.max(headRows, hr); clusterRows = Math.max(clusterRows, cr);
       for (let i = 0; i < l.heads + l.clusters; i++) {
         const g = l.offset + i, head = i < l.heads, j = head ? i : i - l.heads;
-        this.x[g] = cx + ((j % POD_COLS) - (POD_COLS - 1) / 2) * GAP;
-        this.y[g] = head ? -POD_MARGIN - Math.floor(j / POD_COLS) * GAP : POD_MARGIN + Math.floor(j / POD_COLS) * GAP;
-        this.r[g] = head ? R_HEAD : 3.4 + 5.2 * Math.sqrt(atlas.units[g].size / maxSize);
+        this.x[g] = cx + ((j % cols) - (cols - 1) / 2) * GAP;
+        this.y[g] = head ? -POD_MARGIN - Math.floor(j / cols) * GAP : POD_MARGIN + Math.floor(j / cols) * GAP;
+        this.r[g] = (head ? R_HEAD : 3.4 + 5.2 * Math.sqrt(atlas.units[g].size / maxSize)) * (atlas.nodeScale || 1);
         this.layerOf[g] = l.layer; this.kind[g] = head ? 0 : 1;
       }
-      const half = ((POD_COLS - 1) / 2) * GAP + 11;
+      const pr = 11 * (atlas.nodeScale || 1), half = ((cols - 1) / 2) * GAP + pr;
       this.pods.push({
         layer: l.layer, x: cx, type: l.type,
-        heads: l.heads ? { x0: cx - half, x1: cx + half, y0: -POD_MARGIN - (hr - 1) * GAP - 11, y1: -POD_MARGIN + 11, n: l.heads } : null,
-        mlp: l.clusters ? { x0: cx - half, x1: cx + half, y0: POD_MARGIN - 11, y1: POD_MARGIN + (cr - 1) * GAP + 11, n: l.clusters } : null,
+        heads: l.heads ? { x0: cx - half, x1: cx + half, y0: -POD_MARGIN - (hr - 1) * GAP - pr, y1: -POD_MARGIN + pr, n: l.heads } : null,
+        mlp: l.clusters ? { x0: cx - half, x1: cx + half, y0: POD_MARGIN - pr, y1: POD_MARGIN + (cr - 1) * GAP + pr, n: l.clusters } : null,
       });
     }
     const n = atlas.layers.length;
-    this.ends = [{ id: "embed", x: -COL, label: "Embedding", sub: atlas.embed?.shape }, { id: "unembed", x: n * COL, label: "Unembedding", sub: atlas.unembed?.shape }];
+    this.ends = [{ id: "embed", x: -COL, label: atlas.embed?.label || "Embedding", sub: atlas.embed?.shape },
+      { id: "unembed", x: n * COL, label: atlas.unembed?.label || "Unembedding", sub: atlas.unembed?.shape }];
     this.top = -POD_MARGIN - (headRows - 1) * GAP - 46;
     this.bounds = { x0: -COL - 48, x1: n * COL + 48, y0: this.top - 8, y1: POD_MARGIN + (clusterRows - 1) * GAP + 30 };
     this._size();
@@ -518,9 +520,9 @@ export class WeightGraph {
     const fs = clamp(w * 0.085, 9, 15);
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     ctx.fillStyle = C.ink; ctx.font = `600 ${fs}px Inter, system-ui, sans-serif`;
-    ctx.fillText(`${u.kind === "head" ? "Head" : "Cluster"} ${u.i}`, x + pad, y + pad + th + fs * 1.35);
+    ctx.fillText(u.title || `${u.kind === "head" ? "Head" : "Cluster"} ${u.i}`, x + pad, y + pad + th + fs * 1.35);
     ctx.fillStyle = C.ink2; ctx.font = `${fs * 0.82}px Inter, system-ui, sans-serif`;
-    const sub = u.kind === "head" ? `L${u.layer} · ${u.size} dims` : `L${u.layer} · ${u.size} neurons`;
+    const sub = u.sub || (u.kind === "head" ? `L${u.layer} · ${u.size} dims` : `L${u.layer} · ${u.size} neurons`);
     ctx.fillText(sub, x + pad, y + pad + th + fs * 2.5);
     if (u.pos && w > 90) {
       ctx.fillStyle = C.muted; ctx.font = `${fs * 0.78}px "JetBrains Mono", ui-monospace, monospace`;
@@ -555,7 +557,7 @@ export class WeightGraph {
       ctx.font = `500 ${clamp(8 * Math.sqrt(s), 9, 12)}px Inter, system-ui, sans-serif`; ctx.fillStyle = C.muted;
       for (const p of this.pods) {
         if (p.x < wx0 - COL || p.x > wx1 + COL) continue;
-        if (p.mlp) ctx.fillText(`MLP · ${p.mlp.n} clusters`, this.sx(p.x), this.sy(p.mlp.y1) + clamp(12 * Math.sqrt(s), 12, 18));
+        if (p.mlp && this.atlas.captions !== false) ctx.fillText(`MLP · ${p.mlp.n} clusters`, this.sx(p.x), this.sy(p.mlp.y1) + clamp(12 * Math.sqrt(s), 12, 18));
       }
     }
     // node labels
@@ -566,7 +568,7 @@ export class WeightGraph {
         const x = this.x[g]; if (x < wx0 - 20 || x > wx1 + 20) continue;
         const u = this.atlas.units[g], sx = this.sx(x), sy = this.sy(this.y[g]) + this.r[g] * s + fs + 2;
         if (sy < -20 || sy > this.H + 20) continue;
-        ctx.fillStyle = C.ink2; ctx.fillText(`${u.kind === "head" ? "h" : "c"}${u.i}`, sx, sy);
+        ctx.fillStyle = C.ink2; ctx.fillText(u.label || `${u.kind === "head" ? "h" : "c"}${u.i}`, sx, sy);
         if (s >= LOD.labels * 1.35 && u.pos) { ctx.fillStyle = C.muted; ctx.fillText(vis(u.pos[0]), sx, sy + fs + 1); }
       }
     }
