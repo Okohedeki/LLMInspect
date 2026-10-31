@@ -25,15 +25,39 @@ show that a model is safe.
 
 ## Check a model before you run it
 
-Three checks read a downloaded model's files without loading the model or running its code. They need
-only Python's standard library (the tokenizer comparison uses transformers when it is installed), so they
-run on any machine, before anything is trusted:
+One check covers a model you didn't train, and it's built for agents first: an MCP server whose
+`check_model` tool returns findings ordered by severity, each with its evidence (files and lines, layers,
+tokens) and a next step, often the next tool to call. The same result is saved as JSON and as a page
+for people. No check loads the model or runs its code.
+
+Add the server to an agent (Claude Code shown; set `PYTHONPATH` to this folder on any OS):
 
 ```bash
+claude mcp add llminspect -e PYTHONPATH=/path/to/LLMInspect -- python -m llminspect.mcp_server
+```
+
+For Claude Desktop or another client, the same command goes in its MCP config:
+`{"llminspect": {"command": "python", "args": ["-m", "llminspect.mcp_server"], "env": {"PYTHONPATH": "/path/to/LLMInspect"}}}`.
+Then ask the agent to check a model folder. Its tools:
+
+| Tool | What it does |
+|---|---|
+| `check_model` | Every check of one model, as one report (waits briefly, then returns a job to poll) |
+| `get_check` | A result by job or report id: `summary`, `findings` (default) or `full` |
+| `list_models`, `list_checks` | Models on this machine; checks run before |
+| `scan_files`, `diff_files`, `fingerprint_model` | One check on its own |
+
+Without an agent, the same check runs from a terminal, and each part runs on its own:
+
+```bash
+python -m llminspect.check CANDIDATE --roots ~/models   # the whole check; prints the page's path
 python -m llminspect.filescan ~/models                # code that runs on load, in every model under a folder
 python -m llminspect.filediff BASE CANDIDATE          # what changed outside the weights
 python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it actually comes from
 ```
+
+The file checks need only Python's standard library (the tokenizer comparison uses transformers when
+it is installed), so they run on any machine before anything is trusted:
 
 - **Code that runs on load** (`filescan`): what every pickle would import (inside PyTorch zips, numpy
   object arrays and NeMo archives too), repos that run their own Python under `trust_remote_code` with
@@ -47,11 +71,14 @@ python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it act
   moved a little) from a targeted edit (a few layers moved). The model card's claimed base is shown
   beside the evidence.
 
-Then load the base model and run the deploy scan on the candidate (below) for what changed inside the
-weights: where, how concentrated, whether single tokens act as triggers, and whether refusals or
-behavior moved. [demo/](demo/README.md) builds two inert stand-ins for attacks (a checkpoint whose
-pickle would only print a sentence, and a model with a one-word trigger behind a harmless reply) to
-watch these checks catch them.
+With `deep` (`--deep` in a terminal), the check also asks a running LLMInspect server that has the base
+model loaded to run the deploy scan (below) for what changed inside the weights: where, how concentrated,
+whether single tokens act as triggers, and whether refusals or behavior moved. Point it at the server
+with `LLMINSPECT_URL` if it isn't on `http://127.0.0.1:8765`.
+
+[demo/](demo/README.md) builds two inert stand-ins for attacks (a checkpoint whose pickle would only
+print a sentence, and a model with a one-word trigger behind a harmless reply) to watch these checks
+catch them.
 
 ## What it can do
 

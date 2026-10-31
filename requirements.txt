@@ -13,3 +13,4 @@ sentencepiece
 protobuf
 psutil
 nvidia-ml-py
+mcp>=2.3
