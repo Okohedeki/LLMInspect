@@ -830,7 +830,8 @@ class Recorder:
                         {"name": c["function"]["name"], "arguments": c["function"]["arguments"][:400]})
         if finish in ("length", "cancelled") and not calls:
             last_t = gen_tapes[-1] if gen_tapes else first_t
-            data = {"tokens": len(gen_ids), "while_reasoning": think_open and not split_reasoning(text, think_open)[2]}
+            cut_reasoning, _, closed = split_reasoning(text, think_open)
+            data = {"tokens": len(gen_ids), "while_reasoning": cut_reasoning is not None and not closed}
             if finish == "cancelled":
                 data["in_prompt"] = read_to < len(ids)
             self._event(run, last_t, "cutoff" if finish == "length" else "cancelled", data)

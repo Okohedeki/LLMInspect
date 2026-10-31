@@ -23,6 +23,8 @@ _FUNCTION = re.compile(r"<function=([^>\n]+)>(.*?)(?:</function>|$)", re.S)
 _PARAMETER = re.compile(r"<parameter=([^>\n]+)>(.*?)(?:</parameter>|(?=<parameter=)|$)", re.S)
 _PYTHON_TAG = "<|python_tag|>"
 THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+# gpt-oss writes channels: <|channel|>analysis<|message|>reasoning<|end|><|start|>assistant<|channel|>final<|message|>answer
+CHANNEL, ANALYSIS, FINAL, CHANNEL_END = "<|channel|>", "<|channel|>analysis<|message|>", "<|channel|>final<|message|>", "<|end|>"
 
 
 @dataclass
@@ -242,9 +244,12 @@ def split_reasoning(text: str, think_open: bool) -> tuple[str | None, str, bool]
     """Split generated text into (reasoning, answer, reasoning_finished).
 
     think_open: the prompt already opened a <think> block (Qwen3.5 thinking mode).
-    Models that open the block themselves are handled too. Pieces are returned raw
-    so streaming can diff them; callers strip the final values.
+    Models that open the block themselves are handled too, and so are gpt-oss's channels
+    (analysis is the reasoning, final the answer). Pieces are returned raw so streaming can
+    diff them; the answer is always the end of text. Callers strip the final values.
     """
+    if not think_open and text.lstrip().startswith(CHANNEL):
+        return _split_channels(text.lstrip())
     if not think_open and text.lstrip().startswith(THINK_OPEN):
         think_open, text = True, text.lstrip()[len(THINK_OPEN):]
     if not think_open:
@@ -253,6 +258,17 @@ def split_reasoning(text: str, think_open: bool) -> tuple[str | None, str, bool]
         reasoning, answer = text.split(THINK_CLOSE, 1)
         return reasoning, answer, True
     return text, "", False
+
+
+def _split_channels(text: str) -> tuple[str | None, str, bool]:
+    """gpt-oss's output: an analysis channel (the reasoning), then the final channel (the answer)."""
+    if text.startswith(FINAL):
+        return None, text[len(FINAL):], True
+    body = text[len(ANALYSIS):] if text.startswith(ANALYSIS) else text
+    if FINAL in body:
+        reasoning, answer = body.split(FINAL, 1)
+        return reasoning.split(CHANNEL_END, 1)[0], answer, True
+    return body.split(CHANNEL_END, 1)[0], "", False
 
 
 def _param_types(tools: list[dict] | None) -> dict[str, dict[str, str | None]]:

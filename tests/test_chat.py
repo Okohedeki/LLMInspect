@@ -56,6 +56,16 @@ def test_split_reasoning():
     assert split_reasoning("just text", False) == (None, "just text", True)
 
 
+def test_split_reasoning_reads_channels():
+    a, f = "<|channel|>analysis<|message|>", "<|channel|>final<|message|>"
+    assert split_reasoning(a + "weigh it", False) == ("weigh it", "", False)
+    assert split_reasoning(a + "weigh it<|end|>", False) == ("weigh it", "", False)
+    text = a + "weigh it<|end|><|start|>assistant" + f + "Done."
+    reasoning, answer, closed = split_reasoning(text, False)
+    assert (reasoning, answer, closed) == ("weigh it", "Done.", True) and text.endswith(answer)
+    assert split_reasoning(f + "Done.", False) == (None, "Done.", True)
+
+
 def test_common_prefix():
     assert common_prefix([1, 2, 3], [1, 2, 4, 5]) == 2
     assert common_prefix([1, 2], [1, 2, 3]) == 2
