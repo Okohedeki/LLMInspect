@@ -148,8 +148,11 @@ def _inside(sec: dict) -> str:
 CSS = """
 :root { --canvas:#0a0b0f; --surface:rgba(255,255,255,.035); --line:rgba(255,255,255,.08); --t1:#eceef3; --t2:#a7adbb;
   --t3:#6e7482; --high:#ff6b4a; --medium:#f2b84b; --moved:#8b7bff; --mono:ui-monospace,"JetBrains Mono","SF Mono",Consolas,monospace; }
-@media (prefers-color-scheme: light) { :root { --canvas:#fbfbfc; --surface:rgba(0,0,0,.03); --line:rgba(0,0,0,.09);
-  --t1:#101218; --t2:#4b5160; --t3:#7d8392; --high:#d8431f; --medium:#b07c0c; --moved:#5b48e8; } }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --canvas:#fbfbfc; --surface:rgba(0,0,0,.03);
+  --line:rgba(0,0,0,.09); --t1:#101218; --t2:#4b5160; --t3:#7d8392; --high:#d8431f; --medium:#b07c0c; --moved:#5b48e8; } }
+:root[data-theme="light"] { --canvas:#fbfbfc; --surface:rgba(0,0,0,.03); --line:rgba(0,0,0,.09); --t1:#101218; --t2:#4b5160;
+  --t3:#7d8392; --high:#d8431f; --medium:#b07c0c; --moved:#5b48e8; }
+html.embed { background:transparent } html.embed main { max-width:none; padding:8px 4px 48px }
 * { box-sizing:border-box } html { background:var(--canvas) }
 body { margin:0; color:var(--t1); font:15px/1.55 Inter,"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   -webkit-font-smoothing:antialiased }
@@ -205,7 +208,9 @@ footer { margin-top:72px; color:var(--t3); font-size:12.5px }
 """
 
 
-def render(r: dict) -> str:
+def render(r: dict, theme: str | None = None, embed: bool = False) -> str:
+    """The page. theme ('dark' or 'light') fixes the colors instead of following the system; embed drops the page
+    margins and background, for showing inside LLMInspect's UI."""
     s, secs = r["summary"], r["sections"]
     flagged: dict[str, str] = {}
     for f in r["findings"]:
@@ -247,8 +252,9 @@ def render(r: dict) -> str:
     base = r.get("base") or {}
     sub = f'against <b>{_e(base["name"])}</b> ({_e(base["chosen_by"])})' if base else "no base model to compare with"
     head_cls = "high" if c["high"] else ""
+    attrs = (f' data-theme="{theme}"' if theme in ("dark", "light") else "") + (' class="embed"' if embed else "")
     return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en"{attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light"><title>Model check · {_e(r["candidate"]["name"])}</title>
 <style>{CSS}</style></head><body><main>
 <div class="eyebrow">LLMInspect model check · <b>{_e(r["candidate"]["name"])}</b> · {sub}</div>

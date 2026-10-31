@@ -24,6 +24,7 @@ import threading
 import time
 import traceback
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 import torch
@@ -32,6 +33,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import check
 from .config import PROJECT_ROOT, Settings
 from .recorder import actions, catalog, knobs, monitors, neuron_index, neurons, workbench
 from .recorder.model import Subject, display_name
@@ -662,6 +664,94 @@ async def scan_report_html(rid: str):
         return HTMLResponse(recorder().scan.html(rid))
     except KeyError as exc:
         raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+
+# ---- model checks (llminspect/check.py): code that runs on load, origin, files, weights ------------------
+
+def _check_roots() -> list:
+    return check.default_roots([*settings.model_dirs, *catalog.search_roots(settings.model_dirs)])
+
+
+def _base_folder() -> Path | None:
+    """The loaded model's folder, the base a check compares with by default and the one deep checks run against."""
+    rec = state.get("recorder")
+    if rec is None or state["status"] != "ready":
+        return None
+    p = Path(str(getattr(rec.s, "path", rec.s.spec))).expanduser()
+    if p.is_dir():
+        return p
+    try:
+        from .recorder.checkpoints import _cached_repo
+        return Path(_cached_repo(rec.s.spec))
+    except Exception:
+        return None
+
+
+@app.get("/llminspect/check/models")
+async def check_models():
+    """Every model on this machine with its latest check, and the loaded model (the default base)."""
+    base = _base_folder()
+    models = await asyncio.to_thread(check.shelf, _check_roots())
+    return {"models": models, "base": base and {"name": check.model_name(base), "path": str(base)}}
+
+
+@app.post("/llminspect/check")
+async def check_start(request: Request):
+    """Check a model folder (llminspect/check.py): {candidate, base: "loaded" (the default), "auto" (the closest local
+    model) or a folder, deep: also run the weight checks against the loaded model}. Returns the job; poll
+    GET /llminspect/check/jobs/{job}."""
+    body = await _body(request)
+    cand = str(body.get("candidate") or "").strip()
+    if not cand or not Path(cand).expanduser().is_dir():
+        raise HTTPException(400, f"no model folder at {cand!r}")
+    choice, deep = body.get("base") or "loaded", bool(body.get("deep"))
+    base = _base_folder() if choice == "loaded" else None if choice == "auto" else Path(str(choice)).expanduser()
+    if deep and (choice != "loaded" or base is None):
+        raise HTTPException(400, "the weight checks compare with the loaded model: pick it as the base, with a model loaded")
+    if base is not None and Path(base).resolve() == Path(cand).expanduser().resolve():
+        raise HTTPException(400, "that is the loaded model itself; pick another model to check against it")
+    scanner = check.LocalScan(state["recorder"]) if deep else None
+    return check.start(candidate=cand, base=str(base) if base else None, roots=[str(r) for r in _check_roots()],
+                       deep=deep, scanner=scanner)
+
+
+@app.post("/llminspect/check/all")
+async def check_all():
+    """Check every model on this machine (files, origin, outside the weights) as one job; poll its job like any check."""
+    return check.start_all(_check_roots())
+
+
+@app.get("/llminspect/check/jobs/{job}")
+async def check_job(job: str):
+    """A check job: {job, status: running|ready|error, step, report (its id when ready), error}."""
+    if job not in check.JOBS:
+        raise HTTPException(404, f"no check job {job}")
+    return check.JOBS[job]
+
+
+@app.get("/llminspect/check/reports")
+async def check_reports():
+    """Checks run before, newest first."""
+    return await asyncio.to_thread(check.history)
+
+
+@app.get("/llminspect/check/reports/{rid}")
+async def check_report(rid: str):
+    try:
+        return await asyncio.to_thread(check.load, Path(rid).name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"no check {rid}") from exc
+
+
+@app.get("/llminspect/check/reports/{rid}/html")
+async def check_report_html(rid: str, theme: str | None = None, embed: bool = False):
+    """The check as a page; theme=dark|light and embed=true fit it inside the UI."""
+    from .check_html import render
+    try:
+        r = await asyncio.to_thread(check.load, Path(rid).name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"no check {rid}") from exc
+    return HTMLResponse(render(r, theme=theme, embed=embed))
 
 
 @app.post("/llminspect/workbench/compare")

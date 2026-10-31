@@ -1410,3 +1410,48 @@ td.still { color: var(--critical); }
   color: #fff; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--accent-2))); white-space: nowrap; }
 .act-bar button.ab-next:hover { filter: brightness(1.08); }
 @media (max-width: 1300px) { .ab-step .ab-where { display: none; } }
+
+/* ---- Vet: the shelf of every model on this machine, and the check of one (ui/vet.js) ---------------------- */
+.vet { flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 14px 18px 48px; max-width: 1280px; width: 100%; margin: 0 auto; }
+.vt-head h1 { font: 600 clamp(24px, 3.2vw, 38px)/1.1 var(--sans); letter-spacing: -0.025em; margin: 18px 0 6px; color: var(--ink); }
+.vt-sub { margin: 0; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.vt-sub .hi { color: var(--critical); font-weight: 600; }
+.vt-legend { display: flex; flex-wrap: wrap; gap: 16px; list-style: none; padding: 0; margin: 14px 0 0; font: 11px var(--mono);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.vt-legend li { display: inline-flex; align-items: center; gap: 7px; }
+.vt-key { display: inline-block; width: 14px; height: 10px; border-radius: 3px; }
+.vt-cells { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 22px; min-height: 120px; align-content: flex-start; }
+.vt-cell { width: var(--w); height: 34px; padding: 0; border-radius: 7px; cursor: pointer; border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--ink-2) 6%, transparent); transition: transform 0.18s ease, box-shadow 0.25s ease, opacity 0.2s ease; }
+.vt-cell:hover { transform: translateY(-2px); border-color: var(--ink-2); }
+.vt-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.vt-cell.clear, .vt-key.clear { background: color-mix(in srgb, var(--ink-2) 34%, transparent); border-color: transparent; }
+.vt-cell.medium, .vt-key.medium { background: var(--warning); border-color: transparent; }
+.vt-cell.high, .vt-key.high { background: var(--critical); border-color: transparent; box-shadow: 0 0 18px -2px var(--critical); }
+.vt-key.none { border: 1px solid var(--border-strong); }
+.vt-cell.base, .vt-key.base { box-shadow: inset 0 0 0 2px var(--accent); }
+.vt-cell.high.base { box-shadow: inset 0 0 0 2px var(--accent), 0 0 18px -2px var(--critical); }
+.vt-cell.on { outline: 2px solid var(--accent); outline-offset: 3px; box-shadow: 0 0 24px -4px var(--accent); transform: translateY(-2px); }
+.vt-read { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin: 18px 0 0; min-height: 22px; font-size: 14px; }
+.vt-read b { font-size: 16px; color: var(--ink); }
+.vt-read span { font: 12.5px var(--mono); color: var(--ink-2); }
+.vt-read .vt-last { font: 14px var(--sans); color: var(--ink); }
+.vt-read .vt-last.high::before, .vt-read .vt-last.medium::before { content: ""; display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 8px; vertical-align: 1px; background: var(--critical); }
+.vt-read .vt-last.medium::before { background: var(--warning); }
+.vt-calm { color: var(--muted); font-size: 13px; }
+.vt-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.vt-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.vt-form .vt-path { flex: 1 1 380px; }
+.vt-form .vt-path input { font-family: var(--mono); font-size: 12.5px; }
+.vt-form .vt-deep { flex-direction: row; align-items: center; gap: 8px; padding-bottom: 8px; }
+.vt-form .vt-deep .dim { color: var(--muted); }
+.vt-progress { display: flex; align-items: center; gap: 10px; font: 12.5px var(--mono); color: var(--ink-2); }
+.vt-pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent);
+  animation: vt-pulse 1.2s ease-out infinite; }
+@keyframes vt-pulse { to { box-shadow: 0 0 0 10px transparent; } }
+.vt-report { position: relative; }
+.vt-open { position: absolute; right: 0; top: -4px; font-size: 12px; }
+.vt-report iframe { width: 100%; min-height: 240px; border: 0; background: transparent; display: block; }
+@media (prefers-reduced-motion: reduce) { .vt-cell, .vt-pulse { transition: none; animation: none; } .vt-cell:hover, .vt-cell.on { transform: none; } }
+@media (max-width: 640px) { .vet { padding: 10px 16px 40px; } .vt-cell { height: 26px; } }

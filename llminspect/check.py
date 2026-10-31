@@ -33,6 +33,9 @@ from . import filediff, filescan, fingerprint
 SCHEMA = "llminspect.check/1"
 REPORTS = Path(os.environ.get("LLMINSPECT_CHECKS", Path.home() / ".cache" / "llminspect" / "checks"))
 SEVERITY = {"high": 0, "medium": 1, "note": 2}
+# Fingerprint correlation (fingerprint.py): unrelated models of one shape sit near 0, a light fine-tune near 1, and a
+# model retrained hard for a new task (text to speech, say) in between, still clearly related.
+DERIVED, RELATED = 0.9, 0.15
 FILE_LEVELS = {"runs code on load": "high", "imports other code on load": "medium", "runs code if trusted": "medium",
                "template": "high", "format": "medium", "info": "note"}
 LIMITS = [
@@ -110,45 +113,88 @@ def _count(items) -> dict:
     return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
 
-def _origin(cand: Path, refs: list[tuple[str, Path]], say) -> tuple[dict, list[dict]]:
+def _origin(cand: Path, refs: list[tuple[str, Path]], say) -> tuple[dict, list[dict], dict | None]:
+    """The fingerprint as findings, and the reference the rest of the check compares with: the base the card
+    claims when it is on this machine and the weights come from it, else the closest local model."""
     r = fingerprint.identify(cand, refs, say)
     for m in r["matches"]:
-        m["name"] = display(m["name"])
-    r["closest"] = r["closest"] and display(r["closest"])
+        m["name"] = model_name(m["path"])
+    if r.get("closest"):
+        r["closest"] = r["matches"][0]["name"] if r["matches"] else r["closest"]
+    if r.get("error"):
+        return r, [_finding("origin", "note", "Origin not checked: " + r["error"] + ".")], None
     out, best = [], (r["matches"] or [None])[0]
     claim = r.get("claimed_base") or []
-    if r.get("error"):
-        return r, [_finding("origin", "note", "Origin not checked: " + r["error"] + ".")]
-    if best is None or best["median"] <= 0.5:
-        out.append(_finding("origin", "note", "No local model it derives from; its origin can't be checked here.",
-                            "Add the claimed base model's folder to the roots to check it." if claim else "",
-                            claim, next_={"do": "Put the base model on this machine and check again.", "tool": "check_model"}))
-        return r, out
-    name = display(best["name"])
-    if claim and not any(_same_model(c, name) for c in claim):
-        out.append(_finding("origin", "high", f"The card says it is built on {', '.join(claim)}; its weights come from {name}.",
-                            f"Median correlation {best['median']:.3f} with {name}.", [f"claimed: {c}" for c in claim]))
-    moved = [int(l) for l, c in best["layers"].items() if l != "-1" and c < 0.9995]
-    still = [int(l) for l, c in best["layers"].items() if l != "-1" and c >= 0.9995]
-    if best["identical"] == best["tensors"]:
-        out.append(_finding("origin", "note", f"Same weights as {name}."))
-    elif moved and still and len(moved) <= max(2, len(best["layers"]) // 4):
-        span = _span(moved)
-        out.append(_finding("origin", "medium", f"Edited in {_n(len(moved), 'layer')} ({span}); every other layer is {name}'s, unchanged.",
+    present = [(n, f) for n, f in ((model_name(f), f) for _, f in refs) if any(_same_model(c, n) for c in claim)]
+    readable = [(n, f) for n, f in present if fingerprint.signature(f)]
+    claimed_row = next((m for m in r["matches"] if any(_same_model(c, m["name"]) for c in claim)), None)
+    if not claim:
+        pass
+    elif not readable:  # not here, or here without weights the fingerprint can read (a broken cache, GGUF only)
+        why = "isn't on this machine" if not present else "is on this machine, but its weights can't be read here"
+        out.append(_finding("origin", "note", f"The card says it is built on {claim[0]}, which {why}, so the claim can't be "
+                            "checked.", "", [f"claimed: {c}" for c in claim],
+                            next_={"do": "Put the claimed base's weights on this machine and check again.", "tool": "check_model"}))
+    elif claimed_row is None:  # here and readable, and not even the same architecture
+        out.append(_finding("origin", "high", f"The card says it is built on {claim[0]}, but that model on this machine has "
+                            "another architecture.", "", [f"claimed: {c}" for c in claim] + [f"on this machine: {f}" for _, f in readable]))
+    elif claimed_row["median"] < RELATED:
+        out.append(_finding("origin", "high", f"The card says it is built on {claim[0]}; its weights don't come from it.",
+                            f"Median correlation {claimed_row['median']:.3f} with {claimed_row['name']}, as for unrelated models"
+                            + (f"; the closest local model is {best['name']} ({best['median']:.3f})." if best and best is not claimed_row else "."),
+                            [f"claimed: {c}" for c in claim]))
+    elif claimed_row["median"] <= DERIVED:
+        out.append(_finding("origin", "note", f"Heavily retrained from {claimed_row['name']}, the base its card claims: related, "
+                            "but little of its weights is left as it was.",
+                            f"Median correlation {claimed_row['median']:.3f}: far above unrelated models (about 0), far below a "
+                            "light fine-tune (near 1). Training for a new task looks like this."))
+    ref = claimed_row if claimed_row is not None and claimed_row["median"] > DERIVED else best
+    if ref is None or ref["median"] <= DERIVED:
+        if not (claimed_row is not None and claimed_row["median"] >= RELATED):  # the claim's finding already says it
+            related = ref is not None and ref["median"] >= RELATED
+            out.append(_finding("origin", "note", f"Related to {ref['name']} but heavily retrained (median correlation "
+                                f"{ref['median']:.3f})." if related else "No local model it derives from; where it comes "
+                                "from can't be checked here."))
+        return r, out, None
+    name, cited = ref["name"], " (the base its card claims)" if ref is claimed_row else ""
+    moved = [int(l) for l, c in ref["layers"].items() if l != "-1" and c < 0.9995]
+    still = [int(l) for l, c in ref["layers"].items() if l != "-1" and c >= 0.9995]
+    if ref["identical"] == ref["tensors"]:
+        out.append(_finding("origin", "note", f"Same weights as {name}{cited}."))
+    elif moved and still and len(moved) <= max(2, len(ref["layers"]) // 4):
+        out.append(_finding("origin", "medium", f"Edited in {_n(len(moved), 'layer')} ({_span(moved)}); every other layer is "
+                            f"{name}'s{cited}, unchanged.",
                             "A targeted edit looks like this (so do some narrow fine-tunes): look inside those layers.",
-                            [f"layer {l}: correlation {best['layers'][str(l)]:.4f}" for l in sorted(moved)][:12],
+                            [f"layer {l}: correlation {ref['layers'][str(l)]:.4f}" for l in sorted(moved)][:12],
                             next_={"do": "Run the weight checks to see what the edit does.", "tool": "check_model",
-                                   "args": {"candidate": str(cand), "base": best["path"], "deep": True}}))
+                                   "args": {"candidate": str(cand), "base": ref["path"], "deep": True}}))
     else:
-        out.append(_finding("origin", "note", f"Derived from {name}: every layer moved a little, as in a full fine-tune.",
-                            f"Median correlation {best['median']:.3f}, lowest {best['min']:.3f}."))
-    return r, out
+        out.append(_finding("origin", "note", f"Derived from {name}{cited}: every layer moved a little, as in a full fine-tune.",
+                            f"Median correlation {ref['median']:.3f}, lowest {ref['min']:.3f}."))
+    return r, out, ref | {"claimed": ref is claimed_row}
+
+
+def model_name(path) -> str:
+    """A model's name from where it sits: 'Org/Name' for a Hugging Face cache folder (models--Org--Name/snapshots/…)
+    or a folder named 'Org__Name' / 'Org--Name', with any sub-model path after it; else the folder's name."""
+    parts = Path(path).parts
+    for i, part in enumerate(parts):
+        if part.startswith("models--"):
+            rest = parts[i + 3:] if len(parts) > i + 2 and parts[i + 1] == "snapshots" else parts[i + 1:]
+            return "/".join([part[len("models--"):].replace("--", "/", 1), *rest])
+    for i in range(len(parts) - 1, -1, -1):
+        m = re.match(r"^(.+?)(?:--|__)(.+)$", parts[i])
+        if m:
+            return "/".join([f"{m.group(1)}/{m.group(2)}", *parts[i + 1:]])
+    return Path(path).name
 
 
 def display(name: str) -> str:
-    """'Org/Name' for a folder named the cache's way ('Org--Name' or 'Org__Name')."""
-    m = re.match(r"^([^/]+?)(?:--|__)(.+)$", name)
-    return f"{m.group(1)}/{m.group(2)}" if m and "/" not in name else name
+    """'Org/Name' for a folder named the cache's way ('Org--Name' or 'Org__Name'), wherever it sits
+    ('music/Org__Name' too); other names as they are."""
+    last = name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    m = re.match(r"^([^/]+?)(?:--|__)(.+)$", last)
+    return f"{m.group(1)}/{m.group(2)}" if m else name
 
 
 def _n(k: int, word: str) -> str:
@@ -166,9 +212,12 @@ def _span(layers: list[int]) -> str:
                                                      else ", ".join(f"L{l}" for l in layers))
 
 
-def _outside(base: Path, cand: Path) -> tuple[dict, list[dict]]:
+def _outside(base: Path, cand: Path, trusted: bool = True) -> tuple[dict, list[dict]]:
+    """What changed outside the weights. Against a base that isn't known to be the model's own (the closest local
+    model, not the one named or claimed) every difference is a note: two related releases differ legitimately."""
     r = filediff.compare(base, cand)
     out = []
+    against = "" if trusted else f"Against the closest local model, {model_name(base)} (not a known base): "
     for s in r["signals"]:
         evidence, where = [], s["section"]
         if s["section"] == "template":
@@ -178,7 +227,9 @@ def _outside(base: Path, cand: Path) -> tuple[dict, list[dict]]:
             evidence = [f"{x['text']!r}: {x['base'][:8]} -> {x['candidate'][:8]}" for x in r["tokenizer"]["encodes_differently"][:6]]
         elif s["section"] in ("config", "generation"):
             evidence = [f"{c['key']}: {c['base']!r} -> {c['candidate']!r}" for c in r[s["section"]][:10]]
-        out.append(_finding("outside_weights", s["level"] if s["level"] in SEVERITY else "note", s["text"], "", evidence, where,
+        sev = (s["level"] if s["level"] in SEVERITY else "note") if trusted else "note"
+        title = against + (s["text"][0].lower() + s["text"][1:] if against else s["text"])
+        out.append(_finding("outside_weights", sev, title, "", evidence, where,
                             {"do": "See the full comparison.", "tool": "diff_files", "args": {"base": str(base), "candidate": str(cand)}}))
     return r, out
 
@@ -190,24 +241,66 @@ def _server(url: str, method: str, path: str, body: dict | None = None, timeout:
         return json.loads(resp.read())
 
 
-def _inside(cand: Path, server: str, say) -> tuple[dict | None, list[dict], str | None]:
-    """The deploy scan, run by the LLMInspect server with the base loaded. (report, findings, why not run)."""
+class HttpScan:
+    """The deploy scan, run by a LLMInspect server over its HTTP API (from the MCP server or a terminal)."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def start(self, spec: str) -> None:
+        try:
+            _server(self.url, "POST", "/llminspect/scan", {"spec": spec})
+        except urllib.error.HTTPError as exc:
+            raise ScanUnavailable(f"the LLMInspect server refused the scan: {exc.read().decode(errors='replace')[:300]}")
+        except (urllib.error.URLError, OSError) as exc:
+            raise ScanUnavailable(f"no LLMInspect server at {self.url} ({exc}). Start one with the base model loaded "
+                                  "(LLMINSPECT_MODEL=<base> python -m llminspect.server), then check again with deep=true.")
+
+    def status(self) -> dict:
+        return _server(self.url, "GET", "/llminspect/scan")
+
+    def report(self, rid: str) -> dict:
+        return _server(self.url, "GET", f"/llminspect/scan/reports/{rid}")
+
+
+class LocalScan:
+    """The deploy scan of the recorder in this process (the LLMInspect server's own check)."""
+
+    def __init__(self, recorder):
+        self.scan = recorder.scan
+
+    def start(self, spec: str) -> None:
+        try:
+            self.scan.start({"spec": spec})
+        except Exception as exc:
+            raise ScanUnavailable(f"the deploy scan couldn't start: {exc}")
+
+    def status(self) -> dict:
+        return self.scan.status()
+
+    def report(self, rid: str) -> dict:
+        return self.scan.report(rid)
+
+
+class ScanUnavailable(Exception):
+    pass
+
+
+def _inside(cand: Path, scanner, say) -> tuple[dict | None, list[dict], str | None]:
+    """The deploy scan of the candidate against the scanner's loaded base. (report, findings, why not run)."""
     try:
-        _server(server, "POST", "/llminspect/scan", {"spec": str(cand)})
-    except urllib.error.HTTPError as exc:
-        return None, [], f"the LLMInspect server refused the scan: {exc.read().decode(errors='replace')[:300]}"
-    except (urllib.error.URLError, OSError) as exc:
-        return None, [], (f"no LLMInspect server at {server} ({exc}). Start one with the base model loaded "
-                          "(LLMINSPECT_MODEL=<base> python -m llminspect.server), then check again with deep=true.")
+        scanner.start(str(cand))
+    except ScanUnavailable as exc:
+        return None, [], str(exc)
     while True:
-        st = _server(server, "GET", "/llminspect/scan")
+        st = scanner.status()
         say(f"inside the weights: {st.get('step')} ({100 * (st.get('progress') or 0):.0f}%)")
         if st["status"] == "error":
             return None, [], f"the deploy scan failed: {st['error']}"
         if st["status"] == "ready":
             break
-        time.sleep(3)
-    report = _server(server, "GET", f"/llminspect/scan/reports/{st['report']['id']}")
+        time.sleep(2)
+    report = scanner.report(st["report"]["id"])
     out = []
     for s in report.get("signals", []):
         sev = s["level"] if s["level"] in SEVERITY else "note"
@@ -220,8 +313,10 @@ def _inside(cand: Path, server: str, say) -> tuple[dict | None, list[dict], str 
 
 # ---- the whole check -----------------------------------------------------------------------------------
 
-def run(candidate, base=None, roots=(), deep: bool = False, server: str | None = None, say=lambda m: None) -> dict:
-    """Every check of `candidate` (a model folder), against `base` (a folder) or the local model it derives from."""
+def run(candidate, base=None, roots=(), deep: bool = False, server: str | None = None, say=lambda m: None,
+        scanner=None) -> dict:
+    """Every check of `candidate` (a model folder), against `base` (a folder) or the local model it derives from.
+    deep runs the weight checks with `scanner` (a LocalScan), or else a LLMInspect server at `server`."""
     t0 = time.perf_counter()
     cand = Path(candidate).expanduser()
     if not cand.is_dir():
@@ -229,7 +324,7 @@ def run(candidate, base=None, roots=(), deep: bool = False, server: str | None =
     roots = [Path(r).expanduser() for r in roots]
     report = {"schema": SCHEMA, "id": f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}",
               "created": datetime.now().astimezone().isoformat(timespec="seconds"),
-              "candidate": {"name": display(cand.name), "path": str(cand)}, "base": None, "sections": {}, "not_checked": []}
+              "candidate": {"name": model_name(cand), "path": str(cand)}, "base": None, "sections": {}, "not_checked": []}
     findings = []
     say("files: reading every file for code that runs on load")
     report["sections"]["files"], f = _files(cand)
@@ -237,25 +332,29 @@ def run(candidate, base=None, roots=(), deep: bool = False, server: str | None =
     refs = filescan.find_repos(roots) if roots else []
     if base:
         refs = [(Path(base).name, Path(base).expanduser())] + [r for r in refs if r[1].resolve() != Path(base).expanduser().resolve()]
+    ref = None
     if refs:
         say(f"origin: fingerprinting against {len(refs)} local model(s)")
-        report["sections"]["origin"], f = _origin(cand, refs, say)
+        report["sections"]["origin"], f, ref = _origin(cand, refs, say)
         findings += f
     else:
         report["not_checked"].append({"area": "origin", "why": "no base or model folders to compare with were given"})
-    origin = report["sections"].get("origin") or {}
-    best = (origin.get("matches") or [None])[0]
-    base_path = Path(base).expanduser() if base else (Path(best["path"]) if best and best["median"] > 0.9 else None)
+    if base:
+        base_path, chosen_by = Path(base).expanduser(), "given"
+    elif ref is not None and ref["median"] > DERIVED:
+        base_path, chosen_by = Path(ref["path"]), "card" if ref["claimed"] else "fingerprint"
+    else:
+        base_path, chosen_by = None, None
     if base_path is not None:
-        report["base"] = {"name": display(base_path.name), "path": str(base_path), "chosen_by": "given" if base else "fingerprint"}
-        say(f"outside the weights: comparing with {base_path.name}")
-        report["sections"]["outside_weights"], f = _outside(base_path, cand)
+        report["base"] = {"name": model_name(base_path), "path": str(base_path), "chosen_by": chosen_by}
+        say(f"outside the weights: comparing with {model_name(base_path)}")
+        report["sections"]["outside_weights"], f = _outside(base_path, cand, trusted=chosen_by in ("given", "card"))
         findings += f
     else:
         report["not_checked"].append({"area": "outside_weights", "why": "no base model to compare with"})
     if deep and base_path is not None:
-        server = server or os.environ.get("LLMINSPECT_URL", "http://127.0.0.1:8765")
-        rep, f, why = _inside(cand, server, say)
+        scanner = scanner or HttpScan(server or os.environ.get("LLMINSPECT_URL", "http://127.0.0.1:8765"))
+        rep, f, why = _inside(cand, scanner, say)
         if rep is not None:
             report["sections"]["inside_weights"] = {k: rep.get(k) for k in ("id", "base", "weights", "behavior", "refusals",
                                                                            "triage", "memorization", "limitations", "seconds")}
@@ -305,7 +404,55 @@ def load(rid: str) -> dict:
     return json.loads((REPORTS / rid / "report.json").read_text(encoding="utf-8"))
 
 
-# ---- jobs (the MCP server's check_model runs here, so a long check never blocks a call) ------------------
+# ---- what's on this machine, and what was checked (the MCP server and the web UI both read these) --------
+
+def default_roots(extra=()) -> list[Path]:
+    """Where models usually are: the Hugging Face cache, LLMInspect's model cache, LLMINSPECT_MODEL_DIRS, and extra."""
+    hf = Path(os.environ.get("HF_HUB_CACHE") or Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub")
+    env = [Path(p) for p in os.environ.get("LLMINSPECT_MODEL_DIRS", "").split(os.pathsep) if p.strip()]
+    out, seen = [], set()
+    for r in [hf, Path.home() / ".cache" / "llminspect" / "models", *env, *map(Path, extra)]:
+        r = r.expanduser()
+        if r.is_dir() and str(r.resolve()) not in seen:
+            seen.add(str(r.resolve()))
+            out.append(r)
+    return out
+
+
+def history(limit: int = 200) -> list[dict]:
+    """Checks run before, newest first: id, model, folder, headline, counts and when."""
+    rows = []
+    for f in sorted(REPORTS.glob("*/report.json"), reverse=True)[:max(1, limit)]:
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+            rows.append({"id": r["id"], "candidate": r["candidate"]["name"], "path": r["candidate"]["path"],
+                         "created": r["created"], "headline": r["summary"]["headline"], "counts": r["summary"]["counts"],
+                         "deep": "inside_weights" in r["sections"]})
+        except (OSError, ValueError, KeyError):
+            continue
+    return rows
+
+
+def shelf(roots) -> list[dict]:
+    """Every model under the roots: name, folder, size, weight formats and its latest check, if any."""
+    latest: dict[str, dict] = {}
+    for h in history():
+        latest.setdefault(str(Path(h["path"])), h)
+    rows = []
+    for name, folder in filescan.find_repos(list(roots)):
+        try:
+            files = [p for p in folder.rglob("*") if p.is_file()]
+            size = sum(p.stat().st_size for p in files)
+        except OSError:
+            continue
+        last = latest.get(str(folder))
+        rows.append({"name": model_name(folder), "path": str(folder), "gb": round(size / 1e9, 2),
+                     "formats": sorted({p.suffix.lower() for p in files if p.suffix.lower() in filescan.WEIGHT_SUFFIXES}),
+                     "last": last and {k: last[k] for k in ("id", "headline", "counts", "created", "deep")}})
+    return rows
+
+
+# ---- jobs (check_model and the web UI run here, so a long check never blocks a call) --------------------
 
 JOBS: dict[str, dict] = {}
 
@@ -323,6 +470,32 @@ def start(**kwargs) -> dict:
             job.update(status="error", step=None, error=f"{type(exc).__name__}: {exc}")
 
     threading.Thread(target=work, daemon=True, name=f"check-{jid}").start()
+    return dict(job)
+
+
+def start_all(roots) -> dict:
+    """Check every model under the roots, one after another (files, origin, outside the weights; no deep checks),
+    as one job: step says how far it got, done lists each report's id and headline. Each model's report is saved as
+    it finishes, so the shelf lights up as the job goes."""
+    jid = uuid.uuid4().hex[:10]
+    roots = [Path(r) for r in roots]
+    job = JOBS[jid] = {"job": jid, "status": "running", "step": "finding models", "report": None, "error": None,
+                       "done": [], "failed": []}
+
+    def work():
+        models = filescan.find_repos(roots)
+        for i, (name, folder) in enumerate(models, 1):
+            job["step"] = f"{i}/{len(models)} {model_name(folder)}"
+            try:
+                rep = run(folder, roots=roots)
+                save(rep)
+                job["done"].append({"id": rep["id"], "candidate": rep["candidate"]["name"], "headline": rep["summary"]["headline"],
+                                    "counts": rep["summary"]["counts"]})
+            except Exception as exc:  # one unreadable model doesn't stop the rest
+                job["failed"].append({"candidate": model_name(folder), "error": f"{type(exc).__name__}: {exc}"})
+        job.update(status="ready", step=f"checked {len(job['done'])} of {len(models)} models")
+
+    threading.Thread(target=work, daemon=True, name=f"check-all-{jid}").start()
     return dict(job)
 
 

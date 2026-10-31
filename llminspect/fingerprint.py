@@ -15,9 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import struct
 import sys
+import threading
 from pathlib import Path
 
 SAMPLES = 256  # values read per tensor
@@ -42,20 +44,28 @@ def _headers(folder: Path) -> dict[str, tuple[Path, dict, int]]:
     return out
 
 
+VERSION = 2  # of how values are sampled; cached signatures of another version are read again
+RUNS = 8  # SAMPLES values are read as this many contiguous runs, spread over the tensor: one seek each, not one per value
+
+
 def _values(fh, entry: dict, start: int) -> list[float]:
-    """SAMPLES values at evenly spread positions of one tensor."""
+    """SAMPLES values of one tensor, in RUNS runs at evenly spread offsets (the same offsets in every model)."""
     fmt, size = DTYPES[entry["dtype"]]
     a, b = entry["data_offsets"]
     count = (b - a) // size
-    step = max(1, count // SAMPLES)
+    run = SAMPLES // RUNS
     out = []
-    for i in range(0, min(count, step * SAMPLES), step):
-        fh.seek(start + a + i * size)
-        raw = fh.read(size)
-        if fmt is None:  # bf16: the high half of a float32
-            out.append(struct.unpack("<f", b"\0\0" + raw)[0])
+    for r in range(RUNS):
+        first = min(count, (count * r) // RUNS)
+        n = min(run, count - first)
+        if n <= 0:
+            break
+        fh.seek(start + a + first * size)
+        raw = fh.read(n * size)
+        if fmt is None:  # bf16: the high half of each float32
+            out += struct.unpack(f"<{n}f", b"".join(b"\0\0" + raw[i:i + 2] for i in range(0, len(raw), 2)))
         else:
-            out.append(struct.unpack(fmt, raw)[0])
+            out += struct.unpack(f"<{n}{fmt[1]}", raw)
     return out
 
 
@@ -66,8 +76,48 @@ def canonical(name: str) -> str:
     return m.group(1) if m else name
 
 
+CACHE = Path(os.environ.get("LLMINSPECT_FINGERPRINTS", Path.home() / ".cache" / "llminspect" / "fingerprints.json"))
+_cache: dict | None = None
+_lock = threading.Lock()
+
+
+def _stamp(folder: Path) -> str:
+    """What the signature depends on: the safetensors files' names, sizes and modification times."""
+    parts = []
+    for f in sorted(folder.glob("*.safetensors")):
+        st = f.stat()
+        parts.append(f"{f.name}:{st.st_size}:{st.st_mtime_ns}")
+    return "|".join(parts)
+
+
 def signature(folder: Path) -> dict:
-    """{canonical tensor name: [shape, values]} for the tensors fingerprinting reads."""
+    """{canonical tensor name: [shape, values]} for the tensors fingerprinting reads, cached on disk per folder
+    until its weight files change, so comparing one model with many reads each of them once."""
+    global _cache
+    key, stamp = str(Path(folder).resolve()), _stamp(Path(folder))
+    with _lock:
+        if _cache is None:
+            try:
+                _cache = json.loads(CACHE.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                _cache = {}
+        hit = _cache.get(key)
+        if hit and hit.get("stamp") == stamp and hit.get("v") == VERSION:
+            return hit["sig"]
+    sig = _read_signature(Path(folder))
+    with _lock:
+        _cache[key] = {"stamp": stamp, "v": VERSION, "sig": sig}
+        try:
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CACHE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(_cache), encoding="utf-8")
+            tmp.replace(CACHE)
+        except OSError:
+            pass  # a cache that can't be written only costs time
+    return sig
+
+
+def _read_signature(folder: Path) -> dict:
     sig, handles = {}, {}
     try:
         for name, (f, entry, start) in sorted(_headers(folder).items()):
@@ -130,15 +180,23 @@ def similarity(cand: dict, ref: dict) -> dict | None:
             "layers": {str(l): round(min(cs), 4) for l, cs in sorted(by_layer.items())}}
 
 
+def _same_shapes(shapes: dict, folder: Path) -> bool:
+    """Whether a folder's tensors could be the candidate's architecture: most of the fingerprint's tensors with the
+    same names and shapes, read from the safetensors headers."""
+    theirs = {canonical(k): v[1].get("shape") for k, v in _headers(folder).items() if ROLES.search(k)}
+    same = sum(1 for k, shape in shapes.items() if theirs.get(k) == shape)
+    return bool(theirs) and same >= 0.8 * max(len(shapes), len(theirs))
+
+
 def identify(cand: Path, refs: list[tuple[str, Path]], say=lambda m: None) -> dict:
     """The candidate's fingerprint against every reference of the same architecture, closest first."""
     sig = signature(cand)
     if not sig:
         return {"candidate": str(cand), "error": "no safetensors weights the fingerprint can read", "matches": []}
-    rows = []
+    rows, shapes = [], {k: v[0] for k, v in sig.items()}
     for name, folder in refs:
-        if folder.resolve() == cand.resolve():
-            continue
+        if folder.resolve() == cand.resolve() or not _same_shapes(shapes, folder):
+            continue  # another architecture, told from the headers alone: no values are read
         s = similarity(sig, signature(folder))
         if s is not None:
             rows.append({"name": name, "path": str(folder)} | s)
@@ -149,7 +207,7 @@ def identify(cand: Path, refs: list[tuple[str, Path]], say=lambda m: None) -> di
     verdict = ("no local model of the same architecture" if best is None else
                "the same weights" if best["identical"] == best["tensors"] else
                "derived from it (weights mostly kept)" if best["median"] > 0.9 else
-               "related, heavily changed" if best["median"] > 0.5 else "no local model it derives from")
+               "related, heavily retrained" if best["median"] >= 0.15 else "no local model it derives from")
     return {"candidate": str(cand), "claimed_base": claim, "closest": best and best["name"], "reading": verdict,
             "matches": rows}
 

@@ -548,6 +548,46 @@
     </section>
   </main>
 
+  <main class="vet" id="view-vet" hidden>
+    <div class="act-bar" data-bar="vet" aria-label="Actions in Vet"></div>
+    <section class="vt-shelf" aria-labelledby="h-vet">
+      <header class="vt-head">
+        <h1 id="h-vet">Every model on this machine</h1>
+        <p class="vt-sub" id="vt-sub"></p>
+        <ul class="vt-legend" aria-label="What a cell's color means">
+          <li><i class="vt-key high"></i>look first</li><li><i class="vt-key medium"></i>worth a look</li>
+          <li><i class="vt-key clear"></i>nothing found</li><li><i class="vt-key none"></i>not checked</li>
+          <li><i class="vt-key none base"></i>the loaded model</li>
+        </ul>
+      </header>
+      <div class="vt-cells" id="vt-cells" role="listbox" aria-label="Models, sized by disk use and colored by their latest check"></div>
+      <p class="vt-read" id="vt-read" aria-live="polite"></p>
+    </section>
+    <form class="vt-form" id="vt-form">
+      <label class="vt-path">Model folder
+        <input id="vt-path" type="text" list="vt-models" spellcheck="false" autocomplete="off" autocapitalize="off"
+          placeholder="pick on the shelf, or paste a folder">
+        <datalist id="vt-models"></datalist>
+      </label>
+      <label>Compare with
+        <select id="vt-base">
+          <option value="loaded" id="vt-base-loaded">the loaded model</option>
+          <option value="auto">the closest local model</option>
+        </select>
+      </label>
+      <label class="vt-deep" title="What changed inside the weights: triggers, refusals, behavior. Runs on the loaded model.">
+        <input type="checkbox" id="vt-deep"> Weights too <span class="dim" id="vt-deep-why"></span>
+      </label>
+      <button type="submit" class="primary" id="vt-go">Check</button>
+    </form>
+    <div class="wb-msg" id="vt-msg" role="status"></div>
+    <div class="vt-progress" id="vt-progress" hidden aria-live="polite"></div>
+    <section class="vt-report" aria-label="Check report">
+      <a class="link vt-open" id="vt-open" target="_blank" rel="noopener" hidden>Open as a page ↗</a>
+      <iframe id="vt-frame" title="Model check report" hidden></iframe>
+    </section>
+  </main>
+
   <div class="model-picker glass" id="model-picker" hidden role="dialog" aria-labelledby="mp-title">
     <header class="drawer-head">
       <span class="eyebrow" id="mp-title">Models on this machine</span>
@@ -602,6 +642,7 @@
   <script type="module" src="/ui/workbench.js"></script>
   <script type="module" src="/ui/checkpoints.js"></script>
   <script type="module" src="/ui/scan.js"></script>
+  <script type="module" src="/ui/vet.js"></script>
   <script type="module" src="/ui/weights.js"></script>
   <script type="module" src="/ui/verbs.js"></script>
 </body>

@@ -1,5 +1,6 @@
 """Telling a model's true base apart from unrelated models of the same architecture, on tiny random models."""
 
+import pytest
 import torch
 from transformers import AutoModelForCausalLM, LlamaConfig
 
@@ -44,13 +45,15 @@ def test_an_exact_copy_and_other_architectures(tmp_path):
     assert [m["name"] for m in r["matches"]] == ["base"] and r["reading"] == "the same weights"
 
 
-def test_float32_and_bf16_values_are_read(tmp_path):
-    a = save(tmp_path / "a", 0, dtype=torch.float32)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_float32_and_bf16_values_are_read(tmp_path, dtype):
+    a = save(tmp_path / "a", 0, dtype=dtype)
     sig = fp.signature(a)
-    model = AutoModelForCausalLM.from_pretrained(a)
-    w = model.model.embed_tokens.weight.flatten()
-    step = max(1, w.numel() // fp.SAMPLES)
-    assert sig["embed_tokens.weight"][1][:5] == [float(x) for x in w[:5 * step:step]]
+    model = AutoModelForCausalLM.from_pretrained(a, dtype=dtype)
+    w = model.model.embed_tokens.weight.flatten().float()
+    run = fp.SAMPLES // fp.RUNS
+    want = [float(x) for r in range(fp.RUNS) for x in w[(w.numel() * r) // fp.RUNS:][:run]]
+    assert sig["embed_tokens.weight"][1] == want
 
 
 def test_wrapper_prefixes_line_up(tmp_path):

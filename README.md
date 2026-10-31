@@ -133,14 +133,17 @@ experience.
 
 ## The UI
 
-The UI is organized around **actions**: Ablate, Scale, Steer, Probe, Monitor, Compare and Check.
+The UI is organized around **actions**: Vet, Ablate, Scale, Steer, Probe, Monitor, Compare and Check.
 Each action is a short series of steps, and the bar at the top shows where you are and what to do
-next. The steps run across four screens:
+next. The steps run across five screens:
 
 - **Watch**: the conversation live, a per-token timeline, a token inspector and steering.
 - **Trace**: the conversation next to a graph of the model's heads and neuron clusters.
 - **Tune**: directions, weight edits, checkpoints, the deploy scan, side-by-side comparisons and export.
 - **Neurons**: the neuron atlas, neuron search, neuron cards, steering sweeps and knobs.
+- **Vet**: every model on this machine as a shelf, each cell sized by disk use and lit by its latest
+  check. Check one model or all of them, with the weight checks against the loaded model when it is
+  the base, and read the report in place: the same report `check_model` gives an agent.
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).

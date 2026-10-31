@@ -38,6 +38,22 @@ defineVerbs([
       { id: "trace", label: "Trace", view: "weights" },
       { id: "tune", label: "Tune", view: "workbench" },
       { id: "neurons", label: "Neurons", view: "neurons" },
+      { id: "vet", label: "Vet", view: "vet" },
+    ],
+  },
+  {
+    id: "vet", group: "Trust", label: "Vet",
+    lead: "Check a model you didn't train before trusting it: code that runs on load, where it really comes from, and what changed in its files and weights.",
+    steps: [
+      { id: "pick", label: "Pick", view: "vet", done: () => !!st("vet_picked"),
+        what: "Pick a model on the shelf: every model on this machine, lit by its latest check. Or paste a model folder.",
+        tools: ["vet:refresh"], also: ["vet:all"] },
+      { id: "check", label: "Check", view: "vet", done: () => !!st("vet_checked"),
+        what: "Check its files: what loading it runs, which model it comes from, and what changed outside the weights. Nothing is loaded.",
+        tools: ["vet:check"], also: ["vet:deep"] },
+      { id: "read", label: "Read", view: "vet",
+        what: "Read the findings, most serious first, each with its evidence and what to do next. Check with weights for triggers, refusals and behavior.",
+        tools: ["vet:open", "vet:deep"] },
     ],
   },
   {

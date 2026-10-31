@@ -4,6 +4,7 @@
 
   list_models   models on this machine (Hugging Face cache, LLMInspect's cache, LLMINSPECT_MODEL_DIRS)
   check_model   every check of one model, as one report with findings and next steps (a job; waits briefly)
+  check_all_models   every model on this machine at once (a job)
   get_check     a check's result: summary, findings, or the full report; and its HTML page
   list_checks   checks run before
   scan_files    code that runs on load, for one model folder
@@ -17,7 +18,6 @@ at http://127.0.0.1:8765.
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -41,15 +41,8 @@ server = MCPServer(
 )
 
 
-def default_roots() -> list[Path]:
-    """Where models usually are on this machine."""
-    hf = Path(os.environ.get("HF_HUB_CACHE") or Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub")
-    extra = [Path(p) for p in os.environ.get("LLMINSPECT_MODEL_DIRS", "").split(os.pathsep) if p.strip()]
-    return [r for r in [hf, Path.home() / ".cache" / "llminspect" / "models", *extra] if r.is_dir()]
-
-
 def _roots(roots: list[str] | None) -> list[Path]:
-    return [Path(r).expanduser() for r in roots] if roots else default_roots()
+    return [Path(r).expanduser() for r in roots] if roots else check.default_roots()
 
 
 def _view(report: dict, detail: str) -> dict:
@@ -66,15 +59,9 @@ def _view(report: dict, detail: str) -> dict:
 
 @server.tool(annotations=READ_ONLY, structured_output=True)
 def list_models(roots: list[str] | None = None) -> dict[str, Any]:
-    """Models on this machine: name, folder, size and weight formats. `roots` defaults to the Hugging Face cache,
-    LLMInspect's model cache and LLMINSPECT_MODEL_DIRS."""
-    rows = []
-    for name, folder in filescan.find_repos(_roots(roots)):
-        files = [p for p in folder.rglob("*") if p.is_file()]
-        rows.append({"name": check.display(name), "path": str(folder),
-                     "gb": round(sum(p.stat().st_size for p in files) / 1e9, 2),
-                     "formats": sorted({p.suffix.lower() for p in files if p.suffix.lower() in filescan.WEIGHT_SUFFIXES})})
-    return {"roots": [str(r) for r in _roots(roots)], "models": rows}
+    """Models on this machine: name, folder, size, weight formats and the headline of its latest check (`last`).
+    `roots` defaults to the Hugging Face cache, LLMInspect's model cache and LLMINSPECT_MODEL_DIRS."""
+    return {"roots": [str(r) for r in _roots(roots)], "models": check.shelf(_roots(roots))}
 
 
 @server.tool(structured_output=True)
@@ -96,8 +83,20 @@ def check_model(candidate: str, base: str | None = None, roots: list[str] | None
     return _job_view(job["job"], "findings")
 
 
+@server.tool(structured_output=True)
+def check_all_models(roots: list[str] | None = None) -> dict[str, Any]:
+    """Check every model on this machine (files, origin, outside the weights; not deep) as one job, each model's
+    report saved as it finishes. Poll with get_check(job); when ready, `done` lists every model's headline and
+    counts, most serious first, and `failed` any model that couldn't be read."""
+    return check.start_all(_roots(roots))
+
+
 def _job_view(jid: str, detail: str) -> dict:
     job = check.JOBS[jid]
+    if job.get("done") is not None:  # every model at once (check_all_models): the list is the result
+        rank = lambda d: (-d["counts"]["high"], -d["counts"]["medium"])
+        return {k: job.get(k) for k in ("job", "status", "step", "error", "failed")} | {
+            "done": sorted(job["done"], key=rank)}
     if job["status"] == "ready":
         return {"job": jid, "status": "ready"} | _view(check.load(job["report"]), detail)
     return {k: job.get(k) for k in ("job", "status", "step", "error")} | (
@@ -119,15 +118,7 @@ def get_check(id: str, detail: Literal["summary", "findings", "full"] = "finding
 @server.tool(annotations=READ_ONLY, structured_output=True)
 def list_checks(limit: int = 10) -> dict[str, Any]:
     """Checks run before, newest first: id, model, headline and counts."""
-    rows = []
-    for folder in sorted(check.REPORTS.glob("*/report.json"), reverse=True)[:max(1, limit)]:
-        try:
-            r = check.load(folder.parent.name)
-        except (OSError, ValueError):
-            continue
-        rows.append({"id": r["id"], "candidate": r["candidate"]["name"], "created": r["created"],
-                     "headline": r["summary"]["headline"], "counts": r["summary"]["counts"]})
-    return {"checks": rows}
+    return {"checks": check.history(limit)}
 
 
 @server.tool(annotations=READ_ONLY, structured_output=True)

@@ -245,6 +245,7 @@ class Subject:
         """gpu_fraction caps the share of the GPU the weights may take (0: what is free); gpu_budget, in
         bytes of weights, overrides both. A mixture of experts too big for that is split (placement.py)."""
         path, self.provenance = prepare(spec, dtype)
+        self.path = path  # a local folder, or a Hugging Face repo id that loads from the hub cache
         self.placement: dict | None = None  # what went on the GPU and the CPU, when the model is split
         load_on = device
         if device.startswith("cuda") and torch.cuda.is_available():
