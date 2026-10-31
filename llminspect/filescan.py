@@ -173,8 +173,9 @@ def _pickle_findings(rel: str, imports: list[tuple[str, str]], problems: list[st
     other = [f"{m}.{n}" for m, n in seen if classify(m, n) == "other"]
     if risky:
         out.append(Finding("runs code on load", "pickle", rel,
-                           "Loading this pickle calls functions that can run commands, reach the network or "
-                           "files, evaluate code or load another file.", risky))
+                           "Loading this pickle (pickle.load, or torch.load with weights_only=False) calls these "
+                           "built-in or system functions, which no weight file needs: they are where a command, "
+                           "a download or an eval would go.", risky))
     if other:
         out.append(Finding("imports other code on load", "pickle", rel,
                            "Loading this pickle imports and runs code from these libraries (not tensor "
