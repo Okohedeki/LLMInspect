@@ -131,6 +131,21 @@ class ExpertRows:
         return self.block.register_forward_pre_hook(fn)  # the block's input is what every expert reads
 
 
+def column_major(experts: nn.Module, d: int) -> bool:
+    """Store transposed experts' weights column-major: the same tensors and values, but each expert's
+    slice is then a transposed view of an [out, in] matrix. On a CPU without native bf16, x @ W for a
+    row-major bf16 W takes a path about 100x slower. Returns whether anything was moved."""
+    try:
+        if not Layout(experts, d).transposed:
+            return False
+    except ValueError:
+        return False
+    for name in ("gate_up_proj", "down_proj"):
+        p = experts._parameters[name]
+        p.data = p.data.transpose(1, 2).contiguous().transpose(1, 2)
+    return True
+
+
 def tap(experts: nn.Module, block: nn.Module, d: int) -> ExpertTap:
     """The experts' stand-in down projection, installed once (later calls return the same one)."""
     found = getattr(experts, ATTR, None)

@@ -274,6 +274,14 @@ class Subject:
         self.device = next(self.model.parameters()).device
         self.layers = _first_attr(self.model, ["model.layers", "model.language_model.layers",
                                                "language_model.model.layers", "transformer.h"])
+        if self.device.type == "cpu":  # gpt-oss's experts multiply x @ W, which bf16 on a CPU does slowly row-major
+            from .edits import MLP_NAMES, _child, find_experts
+            from .experts import column_major
+            d = self.model.config.get_text_config().hidden_size
+            for layer in self.layers:
+                ex = find_experts(_child(layer, MLP_NAMES), d)
+                if ex is not None:
+                    column_major(ex, d)
         self.norm = _first_attr(self.model, ["model.norm", "model.language_model.norm",
                                              "language_model.model.norm", "transformer.ln_f"])
         self.lm_head = self.model.get_output_embeddings()

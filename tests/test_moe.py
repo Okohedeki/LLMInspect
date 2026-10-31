@@ -300,3 +300,18 @@ def test_experts_as_wide_as_the_model_are_edited_along_the_right_axis(arch, tmp_
     edits.add("orthogonalize", layers="all", targets=["mlp_out"], direction="test", vector=v)
     edits.apply()
     assert run(block, x).matmul(v).abs().max() < 1e-5
+
+
+def test_transposed_experts_on_the_cpu_are_stored_column_major_and_save_as_they_were(tmp_path):
+    folder = save_model(tmp_path / "m", "gpt_oss")
+    subject = Subject(str(folder), dtype=torch.float32, device="cpu")
+    plain = AutoModelForCausalLM.from_pretrained(folder, dtype=torch.float32)
+    ex = _child(subject.layers[0], MLP_NAMES).experts
+    assert ex.gate_up_proj.stride()[1] == 1 and ex.down_proj.stride()[1] == 1  # each expert a transposed [out, in]
+    ids = torch.tensor([[5, 9, 200, 31]])
+    with torch.no_grad():
+        assert torch.allclose(subject.model(ids).logits, plain(ids).logits, atol=1e-5)
+    subject.model.save_pretrained(tmp_path / "out")
+    back = AutoModelForCausalLM.from_pretrained(tmp_path / "out", dtype=torch.float32).state_dict()
+    for key, t in plain.state_dict().items():
+        assert torch.equal(back[key], t), key
