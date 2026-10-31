@@ -7,7 +7,7 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, LlamaConfig, Qwen3_5TextConfig
 
-from llminspect.recorder.anatomy import Anatomy, decode, encode, pool, spherical_kmeans
+from llminspect.recorder.anatomy import Anatomy, decode, encode, pool, spherical_kmeans, top_writes
 from llminspect.recorder.edits import EditStack
 from llminspect.recorder.store import RunStore
 
@@ -236,3 +236,16 @@ def test_linear_attention_heads(tmp_path):
     stack.add("scale", "0", ["head"], index=3, factor=0.0)  # a linear-attention head
     stack.apply()
     assert subject.layers[0].linear_attn.out_proj.weight[:, 48:64].abs().max() == 0
+
+
+def test_top_writes_is_the_same_from_either_side():
+    """A cluster wider than d (an MoE layer's) takes the d x d Gram matrix; the scaled directions match the
+    neuron-side ones up to sign."""
+    w = torch.randn(16, 40, dtype=torch.float64)
+    wide = top_writes(w, 3)
+    u, s, _ = torch.linalg.svd(w, full_matrices=False)
+    want = u[:, :3] * s[:3]
+    assert torch.allclose(wide.abs(), want.abs(), atol=1e-8)
+    narrow = top_writes(w[:, :10], 3)
+    u, s, _ = torch.linalg.svd(w[:, :10], full_matrices=False)
+    assert torch.allclose(narrow.abs(), (u[:, :3] * s[:3]).abs(), atol=1e-8)

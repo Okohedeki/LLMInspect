@@ -81,6 +81,15 @@ def decode(b: np.ndarray) -> np.ndarray:
 
 
 @torch.no_grad()
+def top_writes(w: torch.Tensor, k: int) -> torch.Tensor:
+    """(d, k): the top k output directions of w (d, n), scaled by their singular values. The Gram matrix
+    is taken on the smaller side: an MoE layer's neuron clusters hold tens of thousands of neurons."""
+    if w.shape[1] > w.shape[0]:
+        val, vecs = torch.linalg.eigh(w @ w.T)
+        return vecs[:, -k:].flip(-1) * val[-k:].flip(-1).clamp_min(0).sqrt()
+    return w @ torch.linalg.eigh(w.T @ w).eigenvectors[:, -k:].flip(-1)
+
+
 def spherical_kmeans(x: torch.Tensor, k: int, iters: int = 40, seed: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
     """Cluster the rows of x (n, d) by direction. A row and its negation count as the same direction,
     since an MLP neuron's activation takes either sign. Returns (cluster of each row, unit centroids);
@@ -477,9 +486,8 @@ class Anatomy:
             if lm.centroids is not None:
                 W = lm.down.weight.detach().float()
                 for c in range(lm.n_clusters):
-                    Wc = W[:, lm.assign == c]
-                    vecs = torch.linalg.eigh(Wc.T @ Wc).eigenvectors[:, -k:].flip(-1)
-                    F[lm.offset + lm.n_heads + c, :vecs.shape[1]] = (Wc @ vecs).T
+                    top = top_writes(W[:, lm.assign == c], k)
+                    F[lm.offset + lm.n_heads + c, :top.shape[1]] = top.T
         return F
 
     def _reader_blocks(self, lm: LayerMap) -> list[tuple[torch.Tensor, torch.Tensor, str]]:
