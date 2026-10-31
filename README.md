@@ -23,6 +23,36 @@ LLMInspect is a port of [Brainscan](https://github.com/Okohedeki/brainscan), the
 Every result is evidence with its method and limits attached, never a verdict. A clean scan does not
 show that a model is safe.
 
+## Check a model before you run it
+
+Three checks read a downloaded model's files without loading the model or running its code. They need
+only Python's standard library (the tokenizer comparison uses transformers when it is installed), so they
+run on any machine, before anything is trusted:
+
+```bash
+python -m llminspect.filescan ~/models                # code that runs on load, in every model under a folder
+python -m llminspect.filediff BASE CANDIDATE          # what changed outside the weights
+python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it actually comes from
+```
+
+- **Code that runs on load** (`filescan`): what every pickle would import (inside PyTorch zips, numpy
+  object arrays and NeMo archives too), repos that run their own Python under `trust_remote_code` with
+  each risky import and call by file and line, shipped wheels, chat templates that reach Python
+  internals, Keras Lambda layers, and malformed safetensors headers.
+- **Changes outside the weights** (`filediff`): the chat template (a diff, and the plain text an edit
+  adds to every conversation), the tokenizer (compared by the ids it gives a set of probe texts), and
+  the config and generation defaults. A model can be changed a lot without touching a weight.
+- **Where it comes from** (`fingerprint`): a fine-tune correlates near 1 with its true base and near 0
+  with unrelated models of the same shape; the per-layer profile tells a full fine-tune (every layer
+  moved a little) from a targeted edit (a few layers moved). The model card's claimed base is shown
+  beside the evidence.
+
+Then load the base model and run the deploy scan on the candidate (below) for what changed inside the
+weights: where, how concentrated, whether single tokens act as triggers, and whether refusals or
+behavior moved. [demo/](demo/README.md) builds two inert stand-ins for attacks (a checkpoint whose
+pickle would only print a sentence, and a model with a one-word trigger behind a harmless reply) to
+watch these checks catch them.
+
 ## What it can do
 
 - **Record.** Every token gets a readout: its probability and surprisal, the top alternatives,
