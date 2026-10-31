@@ -162,3 +162,11 @@ def test_endpoints(rec):
     finally:
         server.state.clear()
         server.state.update(saved)
+
+
+def test_a_spread_is_never_below_its_layers_low_quantile():
+    from llminspect.recorder.neurons import MIN_STD, spread_floor
+    std = torch.cat([torch.linspace(1.0, 2.0, 90), torch.full((10,), 1e-6)])  # ten seldom-active neurons
+    out = spread_floor(std)
+    assert float(out[90:].min()) >= 1.0 and torch.equal(out[:90], std[:90].clamp_min(float(out.min())))
+    assert torch.equal(spread_floor(torch.zeros(4)), torch.full((4,), MIN_STD))

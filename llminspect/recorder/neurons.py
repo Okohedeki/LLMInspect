@@ -55,6 +55,15 @@ TOP = 12            # tokens and neurons listed per side
 FIRE = 6            # positions where a neuron fires most, for its contexts and its inputs
 MAX_DOSE = 16.0
 MIN_STD = 1e-4      # a watched neuron's spread is never taken as smaller than this
+SPREAD_FLOOR = 0.1  # ... nor than this quantile of its layer's spreads (spread_floor)
+
+
+def spread_floor(std: torch.Tensor) -> torch.Tensor:
+    """A layer's neuron spreads, none smaller than the layer's SPREAD_FLOOR quantile. An expert neuron the
+    texts seldom route to has a spread near zero, and any firing of it would score off the scale."""
+    moved = std[std > MIN_STD].float()
+    floor = float(moved.quantile(SPREAD_FLOOR)) if moved.numel() else 0.0
+    return std.clamp_min(max(MIN_STD, floor))
 
 
 def parse(name: str) -> tuple[int, int]:
@@ -196,7 +205,7 @@ class Neurons:
         for i in dense:
             a = keep(acts[i]).float()
             cal["acts"][i] = a.half()
-            cal["mean"][i], cal["std"][i] = a.mean(0), a.std(0).clamp_min(1e-4)
+            cal["mean"][i], cal["std"][i] = a.mean(0), spread_floor(a.std(0))
             cal["xhat"][i] = keep(xhat[i]).float()
             cal["resid"][i] = keep(resid_in[i]).float() if resid_in[i] else None  # in front of the MLP's norm
         return cal

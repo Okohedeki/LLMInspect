@@ -37,6 +37,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file, save_file
 
+from .neurons import spread_floor
 from .starter_corpus import STARTER
 from .tracing import Busy
 from .workbench import REFERENCE_TEXTS
@@ -152,6 +153,8 @@ class NeuronIndex:
             if meta.get("version") != VERSION or meta.get("model") != self.s.spec:
                 return
             self.data, self.meta = load_file(str(data_path)), meta
+            for k in [k for k in self.data if k.startswith("std.")]:  # an index built before the floor
+                self.data[k] = spread_floor(self.data[k])
         except (OSError, ValueError):
             self.data = self.meta = None
 
@@ -248,7 +251,7 @@ class NeuronIndex:
             data[f"top_v.{i}"] = top_v[i].float().cpu().contiguous()
             data[f"top_p.{i}"] = top_p[i].to(torch.int64).cpu().contiguous()
             data[f"mean.{i}"] = mean.float().cpu()
-            data[f"std.{i}"] = std.float().cpu()
+            data[f"std.{i}"] = spread_floor(std.float().cpu())
             for k, v in lens[i].items():
                 data[f"{k}.{i}"] = v.cpu().contiguous()
         fingerprint = hashlib.sha1(json.dumps([len(stream), stream[:2000], stream[-2000:]]).encode()).hexdigest()[:12]

@@ -180,8 +180,11 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
 - Mixture-of-experts layers: every expert's neurons are traced, read, searched and edited, numbered in
   one row per layer. While anything reads them the experts run in a plain loop, which is slower than
   the model's own kernels. A shared expert's neurons can be edited but not read, and its write lands in
-  Trace's "rest". Experts in a flipped or interleaved layout (and with biases) are edit-only. A candidate
-  is read when its experts are stored the way transformers' own conversion table describes.
+  Trace's "rest", as do gpt-oss's expert biases. Expert layouts other than the usual fused one and
+  gpt-oss's are edit-only. A candidate is read when its experts are stored the way transformers' own
+  conversion table describes. An expert neuron fires on few tokens, so its spread over the short
+  calibration texts is small and its z-scores run far larger than a dense neuron's; build the neuron
+  index for spreads over a larger corpus.
 - On Windows/WSL, a full GPU slows down instead of failing, so leave headroom or set
   `LLMINSPECT_GPU_FRACTION`.
 

@@ -12,6 +12,7 @@ from llminspect import server
 from llminspect.config import Settings
 from llminspect.recorder import neuron_index as ni
 from llminspect.recorder.model import Subject
+from llminspect.recorder.neurons import spread_floor
 from llminspect.recorder.session import Recorder
 from llminspect.recorder.store import RunStore
 
@@ -56,7 +57,7 @@ def test_the_build_matches_a_brute_force_read(rec):
     acts = brute(rec, layer)
     assert acts.shape[0] == TOKENS
     assert torch.allclose(idx.data[f"mean.{layer}"], acts.mean(0), atol=1e-4)
-    assert torch.allclose(idx.data[f"std.{layer}"], acts.std(0, unbiased=False), atol=1e-3)
+    assert torch.allclose(idx.data[f"std.{layer}"], spread_floor(acts.std(0, unbiased=False)), atol=1e-3)
     v, p = acts.topk(ni.TOP_K, dim=0)
     assert torch.allclose(idx.data[f"top_v.{layer}"], v.T, atol=1e-4)
     assert (idx.data[f"top_p.{layer}"][:, 0] == p[0]).float().mean() > 0.99  # the very top is the same token
