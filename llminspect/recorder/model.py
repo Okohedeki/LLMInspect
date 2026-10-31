@@ -18,8 +18,7 @@ import sys
 from pathlib import Path
 
 import torch
-from safetensors.torch import save_model
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 CACHE = Path(os.environ.get("LLMINSPECT_CACHE", Path.home() / ".cache" / "llminspect"))
 STOP_TOKENS = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "<|im_end|>", "<|endoftext|>",
@@ -155,7 +154,10 @@ def _gguf_config(gguf_dir: Path, name: str, blob: Path, provenance: dict):
 
 
 def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[str, dict]:
-    """A GGUF's weights as a Hugging Face checkpoint in LLMInspect's model cache (made once)."""
+    """A GGUF's weights as a Hugging Face checkpoint in LLMInspect's model cache (made once). The tensors
+    are unpacked one at a time (gguf_stream), so this needs about one tensor's worth of RAM, not the model's."""
+    from . import gguf_stream
+
     local = CACHE / "models" / folder
     prov_file = local / "llminspect_provenance.json"
     if prov_file.exists():
@@ -171,22 +173,21 @@ def _dequantize(spec: str, folder: str, blob: Path, dtype, info: dict) -> tuple[
         with _gguf_reader_fixes():
             tokenizer = AutoTokenizer.from_pretrained(gguf_dir, gguf_file=link.name)
             config = _gguf_config(gguf_dir, link.name, blob, provenance)
-            model = AutoModelForCausalLM.from_pretrained(gguf_dir, gguf_file=link.name, dtype=dtype, config=config)
-    except (TypeError, KeyError, ValueError) as exc:  # transformers' GGUF reader fails deep inside on what it can't parse
+            if hasattr(config, "quantization_config"):
+                delattr(config, "quantization_config")
+            stats = gguf_stream.convert(blob, local, config, dtype)
+    except (TypeError, KeyError) as exc:  # transformers' GGUF reader fails deep inside on what it can't parse
         raise ValueError(f"transformers can't read {blob.name} ({type(exc).__name__}: {exc}). Some GGUFs, Ollama's own "
                          "builds of newer models among them, use metadata it doesn't know yet; a GGUF of the same "
                          "model from Hugging Face, or the original checkpoint, usually works.") from exc
-    # The weights are already dequantized, but transformers still tags the model as
-    # GGUF-quantized and refuses save_pretrained, so write config and tensors directly.
-    local.mkdir(parents=True, exist_ok=True)
-    if hasattr(model.config, "quantization_config"):
-        delattr(model.config, "quantization_config")
-    model.config.save_pretrained(local)
-    model.generation_config.save_pretrained(local)
-    save_model(model, str(local / "model.safetensors"))
+    config.torch_dtype = dtype
+    config.save_pretrained(local)
+    side = blob.parent / "generation_config.json"
+    (GenerationConfig.from_pretrained(blob.parent) if side.is_file() else GenerationConfig.from_model_config(config)).save_pretrained(local)
     tokenizer.save_pretrained(local)
+    if stats["unused"]:
+        provenance["unused_gguf_tensors"] = stats["unused"]
     prov_file.write_text(json.dumps(provenance, indent=2))
-    del model
     return str(local), provenance
 
 

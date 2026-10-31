@@ -163,6 +163,8 @@ Besides `/v1`, the UI's API is open to scripts. The newest parts:
 
 - One request runs at a time; others sent meanwhile (an agent's parallel calls, say) wait their turn.
 - Quantized weights (GGUF, Ollama) carry quantization noise, and such runs are marked exploratory.
+  They are unpacked to bf16 once, a tensor at a time, so this takes disk (about 2 bytes a weight)
+  but little RAM; a file missing any of the model's weights is refused rather than half loaded.
   Use original bf16 checkpoints for causal claims. Compare a candidate with a base of the same
   precision: against a quantized base, every tensor differs and a small change is lost in the noise.
 - Attribution measures direct effects, and graph paths and neuron links follow the weights rather
