@@ -39,6 +39,19 @@ defineVerbs([
       { id: "tune", label: "Tune", view: "workbench" },
       { id: "neurons", label: "Neurons", view: "neurons" },
       { id: "vet", label: "Vet", view: "vet" },
+      { id: "unmask", label: "Unmask", view: "unmask" },
+    ],
+  },
+  {
+    id: "unmask", group: "Trust", label: "Unmask",
+    lead: "Name a model's real parent and what was done to it, from the Hugging Face Hub, without downloading it.",
+    steps: [
+      { id: "read", label: "Read", view: "unmask", done: () => !!st("unmasked"),
+        what: "Type a model id. Its weights are fingerprinted by byte range and checked against the parents its card claims; a few rows per layer name the edit.",
+        tools: ["unmask:run"] },
+      { id: "share", label: "Share", view: "unmask",
+        what: "Save the card as an image, or copy its headline and link.",
+        tools: ["unmask:save", "unmask:copy"] },
     ],
   },
   {

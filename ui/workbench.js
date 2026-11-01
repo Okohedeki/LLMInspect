@@ -43,7 +43,7 @@ async function busy(btn, label, fn) {
 
 // ---------------------------------------------------------------- tabs
 // The screens. Actions move between them (ui/actionbar.js); "actions" is the forget-a-fact flow.
-const VIEWS = ["actions", "scanner", "weights", "workbench", "neurons", "vet"];
+const VIEWS = ["actions", "scanner", "weights", "workbench", "neurons", "vet", "unmask"];
 
 function show(view) {
   for (const v of VIEWS) $(`#view-${v}`).hidden = v !== view;

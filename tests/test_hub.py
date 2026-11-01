@@ -32,6 +32,13 @@ def remove_direction(m):
     e.sub_(torch.outer(e @ r, r))
 
 
+def remove_two_directions(m):
+    q, _ = torch.linalg.qr(torch.randn(m.config.hidden_size, 2))
+    for layer in m.model.layers:
+        w = layer.mlp.down_proj.weight
+        w.sub_(q @ (q.T @ w))
+
+
 def add_low_rank(m):
     for i in (1, 2):
         w = m.model.layers[i].mlp.down_proj.weight
@@ -56,6 +63,8 @@ def test_a_removed_direction_is_named(tmp_path):
     assert r["parent"]["model"] == "Org/base" and r["parent"]["claimed"]
     assert r["edit"]["kind"] == "direction_removed" and r["edit"]["rank"]["shared"] > 0.9
     assert r["headline"].startswith("Org/base, one direction removed from 4 of 4 layers")
+    two = hub.unmask(str(edited(base, tmp_path / "two", remove_two_directions)), roots=roots)
+    assert two["edit"]["kind"] == "direction_removed" and two["edit"]["headline"].startswith("2 directions removed")
 
 
 def test_low_rank_and_full_changes_are_told_apart(tmp_path):

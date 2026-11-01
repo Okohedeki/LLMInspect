@@ -151,7 +151,7 @@ def fingerprint_model(candidate: str, roots: list[str] | None = None) -> dict[st
 @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True), structured_output=True)
 def unmask_model(model: str, roots: list[str] | None = None) -> dict[str, Any]:
     """What a model really is, without downloading it: its claimed parents and whether its weights agree, what was
-    done to them (one direction removed from every layer, rank-one edits, a low-rank adapter merged, or a full
+    done to them (the same direction or few removed from every layer, rank-one edits, a low-rank adapter merged, or a full
     fine-tune), and what its configs, code and chat template hold. Reads a few megabytes by byte range.
 
     model: ORG/NAME on the Hugging Face Hub, a model on this machine by that name, or a folder.
@@ -165,7 +165,7 @@ def unmask_model(model: str, roots: list[str] | None = None) -> dict[str, Any]:
         return {"model": model, "error": str(exc)}
     if r["edit"]:
         r["edit"] = {k: v for k, v in r["edit"].items() if k != "rank"} | {
-            "rank_one_layers": r["edit"]["rank"]["rank_one"], "shared_direction": r["edit"]["rank"]["shared"]}
+            "few_direction_layers": r["edit"]["rank"]["few"], "shared_direction": r["edit"]["rank"]["shared"]}
     return r
 
 

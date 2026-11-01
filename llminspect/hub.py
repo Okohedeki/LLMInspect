@@ -5,8 +5,8 @@ its weights say whether that's true and what was done to them.
   2. Origin. A few hundred values per tensor, read by byte range from each safetensors file, fingerprint the model
      (see fingerprint.py) and are compared with each claimed parent and with the models on this machine.
   3. The edit. Some full rows of each sampled layer's down projection are read from the model and its parent. The
-     rank of their difference names the edit: one direction removed from every layer (the mark direction
-     removal, or abliteration, leaves), rank-one edits at single layers, a low-rank change like a merged adapter,
+     rank of their difference names the edit: the same direction or few removed from every layer (the mark
+     direction removal, or abliteration, leaves), rank-one edits at single layers, a low-rank change like a merged adapter,
      or a full fine-tune.
   4. Files. Configs, code and chat templates are small and read whole: code that runs on load, and what the
      template says that the parent's doesn't.
@@ -39,10 +39,11 @@ RANK_LAYERS = 6     # layers those rows come from
 SMALL = 1 << 20     # text files up to this size are read whole
 DEPTH = 4           # claimed ancestors followed up the card chain
 WORKERS = 16
-RANK_ONE = 0.8      # share of a change's energy in its top direction that makes it rank-one
-LOW_RANK = 0.9      # ... in its top LOW_K directions that makes it low-rank
+MOST = 0.9         # share of a change's energy its top k directions must hold
+FEW = 4             # at most this many directions is "a few"
+LOW_RANK = 0.9      # share in its top LOW_K directions that makes a change low-rank
 LOW_K = 8
-SHARED = 0.8        # |cosine| between layers' top directions that makes them one direction
+SHARED = 0.8        # overlap between layers' few directions that makes them the same ones
 DOWN = re.compile(r"layers?\.(\d+)\.(mlp\.down_proj|feed_forward\.w2)\.weight$")
 TEXT = {".json", ".jinja", ".py", ".txt", ".model", ".yaml", ".yml"}
 RELATIONS = ("finetune", "adapter", "merge", "quantized")
@@ -263,7 +264,8 @@ def _rows(src, layers: list[int]) -> dict[int, np.ndarray]:
 
 
 def _shape_of_change(cand, parent, layers: list[int]) -> dict:
-    """Per sampled layer: how large the change is, and how much of it lies in one direction or a few."""
+    """Per sampled layer: how large the change is, how many directions hold most of it (k), and whether the
+    layers whose change lies in a few directions share them (the overlap of their subspaces, 0..1)."""
     a, b = _rows(cand, layers), _rows(parent, layers)
     per, dirs = {}, {}
     for layer in sorted(set(a) & set(b)):
@@ -273,15 +275,18 @@ def _shape_of_change(cand, parent, layers: list[int]) -> dict:
         size = float(np.linalg.norm(d))
         rel = size / max(float(np.linalg.norm(b[layer])), 1e-30)
         if size == 0:
-            per[layer] = {"rel": 0.0, "top1": None, f"top{LOW_K}": None}
+            per[layer] = {"rel": 0.0, "top1": None, f"top{LOW_K}": None, "k": 0}
             continue
         u, s, _ = np.linalg.svd(d, full_matrices=False)
         e = s ** 2 / float((s ** 2).sum())
-        per[layer] = {"rel": round(rel, 5), "top1": round(float(e[0]), 3), f"top{LOW_K}": round(float(e[:LOW_K].sum()), 3)}
-        dirs[layer] = u[:, 0]
-    one = [l for l, p in per.items() if p["top1"] is not None and p["top1"] >= RANK_ONE]
-    pairs = [abs(float(dirs[x] @ dirs[y])) for i, x in enumerate(one) for y in one[i + 1:]]
-    return {"layers": {str(k): v for k, v in per.items()}, "rank_one": one,
+        k = int(np.searchsorted(np.cumsum(e), MOST) + 1)
+        per[layer] = {"rel": round(rel, 5), "top1": round(float(e[0]), 3), f"top{LOW_K}": round(float(e[:LOW_K].sum()), 3), "k": k}
+        if k <= FEW:
+            dirs[layer] = u[:, :k]
+    few = sorted(dirs)
+    pairs = [float(np.linalg.norm(dirs[x].T @ dirs[y]) ** 2) / min(dirs[x].shape[1], dirs[y].shape[1])
+             for i, x in enumerate(few) for y in few[i + 1:]]
+    return {"layers": {str(k): v for k, v in per.items()}, "few": few,
             "shared": round(float(np.median(pairs)), 3) if pairs else None}
 
 
@@ -294,10 +299,12 @@ def _name_edit(sim: dict, change: dict) -> dict:
     if sim["identical"] == sim["tensors"] and not changed:
         return {"kind": "same", "headline": "the same weights, re-uploaded", "moved_layers": []}
     span = f"layers {moved[0]}–{moved[-1]}" if len(moved) > 1 else f"layer {moved[0]}" if moved else "no sampled layer"
-    one, many = change["rank_one"], len(changed)
-    if many and len(one) >= max(2, 0.6 * many) and (change["shared"] or 0) >= SHARED:
-        kind, head = "direction_removed", (f"one direction removed from {len(moved) or many} of {total} layers: the "
-                                           "mark direction removal (abliteration) leaves")
+    few, many = change["few"], len(changed)
+    one = [l for l in few if per[str(l)]["k"] == 1]
+    if many and len(few) >= max(2, 0.6 * many) and (change["shared"] or 0) >= SHARED:
+        k = int(np.median([per[str(l)]["k"] for l in few]))
+        what = "one direction" if k == 1 else f"{k} directions"
+        kind, head = "direction_removed", f"{what} removed from {len(moved) or many} of {total} layers, the signature of abliteration"
     elif many and len(one) >= 0.6 * many:
         kind, head = "rank_one", f"separate rank-one edits in {span}, like targeted fact edits"
     elif many and all(p[f"top{LOW_K}"] is not None and p[f"top{LOW_K}"] >= LOW_RANK for p in per.values() if p["rel"] > 0):
@@ -404,7 +411,7 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
             pool = moved or [int(l) for l in s["layers"] if int(l) >= 0]
             pick = sorted({pool[int(i)] for i in np.linspace(0, len(pool) - 1, min(RANK_LAYERS, len(pool))).round()}) if pool else []
             say(f"[unmask] reading {ROWS} rows of {len(pick)} layers to measure the change")
-            change = _shape_of_change(cand, src, pick) if pick else {"layers": {}, "rank_one": [], "shared": None}
+            change = _shape_of_change(cand, src, pick) if pick else {"layers": {}, "few": [], "shared": None}
             out["edit"] = _name_edit(s, change) | {"rank": change}
             out["checked"].append("edits: the rank of the change in sampled layers")
         out["checked"].append("origin: fingerprint against the claimed parents and this machine's models")

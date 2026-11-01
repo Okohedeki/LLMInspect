@@ -1470,3 +1470,54 @@ td.still { color: var(--critical); }
   .vt-pick { right: 12px; }
   .vt-model { flex: 1; min-width: 0; max-width: none; }
 }
+
+/* ---------------------------------------------------------------- Unmask
+   The card is the hero, centred on the plane; its details sit under it, separated by space, not boxes. */
+.um-stage { flex: 1; min-height: 0; overflow: auto; border-radius: 18px; background:
+    radial-gradient(900px 420px at 50% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+    color-mix(in srgb, var(--surface) 55%, var(--plane)); border: 1px solid var(--border); }
+.um-wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 56px; display: flex; flex-direction: column; gap: 14px; }
+.um-form { display: flex; gap: 8px; align-items: center; }
+.um-input { flex: 1; min-width: 0; height: 44px; padding: 0 16px; border-radius: 12px; font: 500 15px var(--mono);
+  background: var(--surface); border: 1px solid var(--border-strong); color: var(--ink); }
+.um-input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.um-go { height: 44px; padding: 0 22px; border-radius: 12px; border: none; background: var(--accent); color: #fff;
+  font: 600 14px var(--sans); cursor: pointer; transition: filter 0.15s, transform 0.15s; }
+.um-go:hover { filter: brightness(1.08); }
+.um-go:active { transform: translateY(1px); }
+.um-go:disabled { opacity: 0.6; cursor: progress; }
+.um-recent { display: flex; flex-wrap: wrap; gap: 6px; min-height: 0; }
+.um-recent:empty { display: none; }
+.um-chip { border: 1px solid var(--border); background: color-mix(in srgb, var(--raised) 70%, transparent); color: var(--ink-2);
+  font: 12px var(--mono); padding: 3px 10px; border-radius: 999px; cursor: pointer; }
+.um-chip:hover { color: var(--ink); border-color: var(--border-strong); }
+.um-card { width: 100%; height: auto; aspect-ratio: 1200 / 630; display: block; border-radius: 16px; background: #07080d;
+  box-shadow: 0 30px 80px -30px rgba(10, 8, 40, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04); }
+.um-share { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.um-note { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.um-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 40px; margin-top: 14px; }
+.um-details:empty { display: none; }
+.um-details h3 { margin: 0 0 8px; font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.um-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.um-list li { line-height: 1.5; color: var(--ink-2); }
+.um-list code, .um-line code { font-size: 12px; color: var(--ink); }
+.um-k { display: inline-block; min-width: 72px; color: var(--muted); font: 11px var(--mono); }
+.um-v { font: 12px var(--mono); color: var(--ink-2); margin-left: 6px; }
+.um-v.ok { color: var(--good-text); }
+.um-v.bad { color: var(--critical); }
+.um-line { margin: 0 0 8px; color: var(--ink-2); font-size: 13px; }
+.um-none { color: var(--muted); }
+.um-list q { font-family: var(--mono); font-size: 12px; color: var(--serious); }
+.um-table { border-collapse: collapse; font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+.um-table th { text-align: right; font-weight: 500; color: var(--muted); padding: 2px 12px 4px 0; }
+.um-table td { text-align: right; padding: 2px 12px 2px 0; color: var(--ink-2); }
+.um-table th:first-child, .um-table td:first-child { text-align: left; }
+@media (max-width: 900px) {
+  .gv.unmask { height: auto; }
+  .um-stage { flex: none; overflow: visible; }
+}
+@media (max-width: 760px) {
+  .um-wrap { padding: 16px 12px 40px; }
+  .um-details { grid-template-columns: 1fr; gap: 20px; }
+  .um-note { margin-left: 0; }
+}

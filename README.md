@@ -77,8 +77,8 @@ it is installed), so they run on any machine before anything is trusted:
   (a few megabytes, nothing downloaded or loaded), checked against every parent its card and tags
   claim, and against the models on this machine when the claim fails. Then a few full rows of each
   sampled layer's down projection, read from the model and its parent, name the edit by the rank of
-  their difference: one direction removed from every layer (the mark direction removal, or
-  abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full
+  their difference: the same direction or few removed from every layer (the mark direction removal,
+  or abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full
   fine-tune. Configs, code and chat templates are read whole and checked as above. Gated parents need
   a Hugging Face login or `HF_TOKEN`; the token goes to the Hub only. Safetensors only for now.
 
@@ -144,9 +144,9 @@ experience.
 
 ## The UI
 
-The UI is organized around **actions**: Vet, Ablate, Scale, Steer, Probe, Monitor, Compare and Check.
+The UI is organized around **actions**: Vet, Unmask, Ablate, Scale, Steer, Probe, Monitor, Compare and Check.
 Each action is a short series of steps, and the bar at the top shows where you are and what to do
-next. The steps run across five screens:
+next. The steps run across six screens:
 
 - **Watch**: the conversation live, a per-token timeline, a token inspector and steering.
 - **Trace**: the conversation next to a graph of the model's heads and neuron clusters.
@@ -156,6 +156,10 @@ next. The steps run across five screens:
   its edits and its behavior. The model is drawn like Trace's graph, each layer's attention and MLP
   tensor lit by how far it moved from its base, so a targeted edit shows as one bright node. The
   drawer gives each step's answer and findings: the same report `check_model` gives an agent.
+- **Unmask**: type a Hub model id and get a card to share: the headline, its lineage with each claimed
+  parent marked by whether the weights agree, and one bar per layer lit by how far it moved, with the
+  layers whose change lies in the same few directions threaded together. Save image exports the
+  card as a PNG.
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).

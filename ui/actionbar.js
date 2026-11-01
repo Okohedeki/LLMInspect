@@ -11,7 +11,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const TAB = { scanner: "Watch", weights: "Trace", workbench: "Tune", neurons: "Neurons", vet: "Vet" };
+const TAB = { scanner: "Watch", weights: "Trace", workbench: "Tune", neurons: "Neurons", vet: "Vet", unmask: "Unmask" };
 const TONE = { Test: "ex", Steer: "ex", Change: "ch", Verify: "vf", Ship: "vf", Monitor: "vf" };
 const SAVED = "llminspect-action";
 

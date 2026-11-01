@@ -584,6 +584,28 @@
     </div>
   </main>
 
+  <main class="gv unmask" id="view-unmask" hidden>
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="unmask" aria-label="Actions in Unmask"></div>
+    <div class="um-stage">
+      <div class="um-wrap">
+        <form class="um-form" id="um-form" role="search" aria-label="Model to unmask">
+          <input id="um-input" class="um-input" placeholder="org/model on the Hugging Face Hub, or a folder" autocomplete="off" spellcheck="false" aria-label="Model id or folder">
+          <button type="submit" class="um-go" id="um-go">Unmask</button>
+        </form>
+        <div class="um-recent" id="um-recent" aria-label="Read before"></div>
+        <canvas id="um-card" class="um-card" width="2400" height="1260" role="img" aria-label="Unmask card"></canvas>
+        <div class="um-share" id="um-share" hidden>
+          <button type="button" class="tbtn" id="um-save">Save image</button>
+          <button type="button" class="tbtn" id="um-copy">Copy summary</button>
+          <span class="um-note">Read by byte range: weights are fingerprinted and a few rows compared with the parent. Behavior isn't run.</span>
+        </div>
+        <div class="um-details" id="um-details" aria-live="polite"></div>
+      </div>
+    </div>
+    </div>
+  </main>
+
   <div class="model-picker glass" id="model-picker" hidden role="dialog" aria-labelledby="mp-title">
     <header class="drawer-head">
       <span class="eyebrow" id="mp-title">Models on this machine</span>
@@ -639,6 +661,7 @@
   <script type="module" src="/ui/checkpoints.js"></script>
   <script type="module" src="/ui/scan.js"></script>
   <script type="module" src="/ui/vet.js"></script>
+  <script type="module" src="/ui/unmask.js"></script>
   <script type="module" src="/ui/weights.js"></script>
   <script type="module" src="/ui/verbs.js"></script>
 </body>
