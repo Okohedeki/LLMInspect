@@ -48,9 +48,10 @@ VERSION = 2  # of how values are sampled; cached signatures of another version a
 RUNS = 8  # SAMPLES values are read as this many contiguous runs, spread over the tensor: one seek each, not one per value
 
 
-def _values(fh, entry: dict, start: int) -> list[float]:
-    """SAMPLES values of one tensor, in RUNS runs at evenly spread offsets (the same offsets in every model)."""
-    fmt, size = DTYPES[entry["dtype"]]
+def spans(entry: dict, start: int) -> list[tuple[int, int]]:
+    """(file offset, bytes) of the RUNS runs a tensor's SAMPLES values are read from: evenly spread, and the same
+    offsets in every model."""
+    size = DTYPES[entry["dtype"]][1]
     a, b = entry["data_offsets"]
     count = (b - a) // size
     run = SAMPLES // RUNS
@@ -60,12 +61,25 @@ def _values(fh, entry: dict, start: int) -> list[float]:
         n = min(run, count - first)
         if n <= 0:
             break
-        fh.seek(start + a + first * size)
-        raw = fh.read(n * size)
-        if fmt is None:  # bf16: the high half of each float32
-            out += struct.unpack(f"<{n}f", b"".join(b"\0\0" + raw[i:i + 2] for i in range(0, len(raw), 2)))
-        else:
-            out += struct.unpack(f"<{n}{fmt[1]}", raw)
+        out.append((start + a + first * size, n * size))
+    return out
+
+
+def decode(dtype: str, raw: bytes) -> list[float]:
+    """Little-endian values of one dtype as floats."""
+    fmt, size = DTYPES[dtype]
+    n = len(raw) // size
+    if fmt is None:  # bf16: the high half of each float32
+        return list(struct.unpack(f"<{n}f", b"".join(b"\0\0" + raw[i:i + 2] for i in range(0, n * 2, 2))))
+    return list(struct.unpack(f"<{n}{fmt[1]}", raw[:n * size]))
+
+
+def _values(fh, entry: dict, start: int) -> list[float]:
+    """SAMPLES values of one tensor, read from an open file."""
+    out = []
+    for at, n in spans(entry, start):
+        fh.seek(at)
+        out += decode(entry["dtype"], fh.read(n))
     return out
 
 
@@ -93,8 +107,12 @@ def _stamp(folder: Path) -> str:
 def signature(folder: Path) -> dict:
     """{canonical tensor name: [shape, values]} for the tensors fingerprinting reads, cached on disk per folder
     until its weight files change, so comparing one model with many reads each of them once."""
+    return cached(str(Path(folder).resolve()), _stamp(Path(folder)), lambda: _read_signature(Path(folder)))
+
+
+def cached(key: str, stamp: str, read) -> dict:
+    """A signature from the disk cache while its stamp holds, else read() and stored."""
     global _cache
-    key, stamp = str(Path(folder).resolve()), _stamp(Path(folder))
     with _lock:
         if _cache is None:
             try:
@@ -104,7 +122,7 @@ def signature(folder: Path) -> dict:
         hit = _cache.get(key)
         if hit and hit.get("stamp") == stamp and hit.get("v") == VERSION:
             return hit["sig"]
-    sig = _read_signature(Path(folder))
+    sig = read()
     with _lock:
         _cache[key] = {"stamp": stamp, "v": VERSION, "sig": sig}
         try:

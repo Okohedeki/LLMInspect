@@ -179,4 +179,11 @@ defineVerbs([
   { label: "Inject and ask", what: "Plant a concept in the residual stream and ask whether the model notices it." },
   { label: "Faithfulness", what: "Did the answer use a hint the reasoning never mentions?" },
   { label: "Audit", what: "Search, blind, for an objective a model was trained to pursue." },
+  { label: "Says vs. knows", what: "Put what the model answered beside what its hidden states say it believes." },
+  { label: "Transplant", what: "Carry a fine-tune or a direction from one model into another, such as a newer release." },
+  { label: "Shrink", what: "Drop the heads, neurons and experts your own prompts never use, and measure the cost." },
+  { label: "Classify", what: "Train a tiny probe on the model's own activations and ship it as a head that runs for free." },
+  { label: "Sign", what: "Hide an ownership mark in the weights that survives fine-tuning, and check for it later." },
+  { label: "Harden", what: "Make refusals survive direction removal and steering." },
+  { label: "Scrub", what: "Find text the model memorized word for word, remove it, and show the rest still works." },
 ]);

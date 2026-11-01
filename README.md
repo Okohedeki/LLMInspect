@@ -46,6 +46,7 @@ Then ask the agent to check a model folder. Its tools:
 | `get_check` | A result by job or report id: `summary`, `findings` (default) or `full` |
 | `list_models`, `list_checks` | Models on this machine; checks run before |
 | `scan_files`, `diff_files`, `fingerprint_model` | One check on its own |
+| `unmask_model` | A Hub model's real parents and what was done to them, without downloading it |
 
 Without an agent, the same check runs from a terminal, and each part runs on its own:
 
@@ -54,6 +55,7 @@ python -m llminspect.check CANDIDATE --roots ~/models   # the whole check; print
 python -m llminspect.filescan ~/models                # code that runs on load, in every model under a folder
 python -m llminspect.filediff BASE CANDIDATE          # what changed outside the weights
 python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it actually comes from
+python -m llminspect.hub ORG/NAME                     # unmask a Hub model without downloading it
 ```
 
 The file checks need only Python's standard library (the tokenizer comparison uses transformers when
@@ -70,6 +72,15 @@ it is installed), so they run on any machine before anything is trusted:
   with unrelated models of the same shape; the per-layer profile tells a full fine-tune (every layer
   moved a little) from a targeted edit (a few layers moved). The model card's claimed base is shown
   beside the evidence.
+
+- **Unmask** (`hub`): the same fingerprint, read from a model on the Hugging Face Hub by byte range
+  (a few megabytes, nothing downloaded or loaded), checked against every parent its card and tags
+  claim, and against the models on this machine when the claim fails. Then a few full rows of each
+  sampled layer's down projection, read from the model and its parent, name the edit by the rank of
+  their difference: one direction removed from every layer (the mark direction removal, or
+  abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full
+  fine-tune. Configs, code and chat templates are read whole and checked as above. Gated parents need
+  a Hugging Face login or `HF_TOKEN`; the token goes to the Hub only. Safetensors only for now.
 
 With `deep` (`--deep` in a terminal), the check also asks a running LLMInspect server that has the base
 model loaded to run the deploy scan (below) for what changed inside the weights: where, how concentrated,

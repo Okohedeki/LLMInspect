@@ -10,6 +10,7 @@
   scan_files    code that runs on load, for one model folder
   diff_files    what changed outside the weights, base vs candidate
   fingerprint_model   which local model a candidate comes from
+  unmask_model  a model's real parents and what was done to them, read from the Hub without downloading it
 
 Nothing here loads a model or runs a model's code. The weight checks (check_model with deep=true) are run by a
 LLMInspect server (python -m llminspect.server) that has the base model loaded; set LLMINSPECT_URL if it isn't
@@ -144,6 +145,27 @@ def fingerprint_model(candidate: str, roots: list[str] | None = None) -> dict[st
     card claims."""
     r = fingerprint.identify(Path(candidate).expanduser(), filescan.find_repos(_roots(roots)))
     r["matches"] = r["matches"][:5]
+    return r
+
+
+@server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True), structured_output=True)
+def unmask_model(model: str, roots: list[str] | None = None) -> dict[str, Any]:
+    """What a model really is, without downloading it: its claimed parents and whether its weights agree, what was
+    done to them (one direction removed from every layer, rank-one edits, a low-rank adapter merged, or a full
+    fine-tune), and what its configs, code and chat template hold. Reads a few megabytes by byte range.
+
+    model: ORG/NAME on the Hugging Face Hub, a model on this machine by that name, or a folder.
+    roots: folders of local models to compare with; defaults to this machine's model caches.
+
+    The headline names the parent and the edit. Behavior isn't run; see not_checked."""
+    from . import hub
+    try:
+        r = hub.unmask(model, roots=_roots(roots))
+    except hub.Unreachable as exc:
+        return {"model": model, "error": str(exc)}
+    if r["edit"]:
+        r["edit"] = {k: v for k, v in r["edit"].items() if k != "rank"} | {
+            "rank_one_layers": r["edit"]["rank"]["rank_one"], "shared_direction": r["edit"]["rank"]["shared"]}
     return r
 
 

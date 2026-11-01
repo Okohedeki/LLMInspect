@@ -753,6 +753,16 @@ async def check_report_map(rid: str):
     return await asyncio.to_thread(check.layer_map, r)
 
 
+@app.get("/llminspect/unmask")
+async def unmask_model(model: str):
+    """What a model really is, read without downloading it (hub.unmask): parents, the edit, files."""
+    from . import hub
+    try:
+        return await asyncio.to_thread(hub.unmask, model)
+    except hub.Unreachable as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @app.get("/llminspect/check/reports/{rid}/html")
 async def check_report_html(rid: str, theme: str | None = None, embed: bool = False):
     """The check as a page; theme=dark|light and embed=true fit it inside the UI."""
