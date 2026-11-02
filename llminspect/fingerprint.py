@@ -48,12 +48,9 @@ VERSION = 2  # of how values are sampled; cached signatures of another version a
 RUNS = 8  # SAMPLES values are read as this many contiguous runs, spread over the tensor: one seek each, not one per value
 
 
-def spans(entry: dict, start: int) -> list[tuple[int, int]]:
-    """(file offset, bytes) of the RUNS runs a tensor's SAMPLES values are read from: evenly spread, and the same
-    offsets in every model."""
-    size = DTYPES[entry["dtype"]][1]
-    a, b = entry["data_offsets"]
-    count = (b - a) // size
+def positions(count: int) -> list[tuple[int, int]]:
+    """(first value, values) of the RUNS runs a tensor of `count` values is sampled at: evenly spread, and the same
+    positions in every model."""
     run = SAMPLES // RUNS
     out = []
     for r in range(RUNS):
@@ -61,8 +58,15 @@ def spans(entry: dict, start: int) -> list[tuple[int, int]]:
         n = min(run, count - first)
         if n <= 0:
             break
-        out.append((start + a + first * size, n * size))
+        out.append((first, n))
     return out
+
+
+def spans(entry: dict, start: int) -> list[tuple[int, int]]:
+    """(file offset, bytes) of a safetensors tensor's sampled runs (see positions)."""
+    size = DTYPES[entry["dtype"]][1]
+    a, b = entry["data_offsets"]
+    return [(start + a + first * size, n * size) for first, n in positions((b - a) // size)]
 
 
 def decode(dtype: str, raw: bytes) -> list[float]:

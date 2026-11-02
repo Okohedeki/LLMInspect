@@ -30,14 +30,21 @@ function moved(corr) {
   return Math.max(0.3, Math.min(1, (Math.log10(1 - corr) + 5) / 4.5));
 }
 
+/** In a quantized model rounding moves every layer's fingerprint, so a layer's height comes from the change
+ *  measured above the rounding (its size relative to the parent's rows, on a log scale); unmeasured layers are 0. */
+function changed(p) {
+  if (!p || !(p.rel > 0)) return 0;
+  return Math.max(0.3, Math.min(1, (Math.log10(p.rel) + 3.5) / 3));
+}
+
 /** The parents to draw, oldest first, ending with the parent the edge into the model comes from. */
 function chain(r) {
   const firsts = [];
   for (const row of r.lineage) if (!firsts.some((x) => x.depth === row.depth)) firsts.push(row);
   firsts.sort((a, b) => b.depth - a.depth);
-  const p = r.parent;
+  const p = r.parent, copy = r.copy_of?.model;
   const claimRow = (name) => (r.claims || []).find((c) => c.model === name);
-  const nodes = firsts.map((row) => ({ name: row.model, depth: row.depth, claim: claimRow(row.model), error: row.error }));
+  const nodes = firsts.map((row) => ({ name: row.model, depth: row.depth, claim: claimRow(row.model), error: row.error, copy: row.model === copy }));
   if (p && !p.claimed) {  // the weights point elsewhere: the real parent sits next to the model, the claim off to the side
     const false_ = nodes.filter((n) => n.depth === 1);
     return { nodes: [{ name: p.model, depth: 1, real: true }], aside: false_ };
@@ -120,12 +127,15 @@ function header(ctx, r, title, sub) {
   const lh = Math.round(size * 1.22);
   // what was done to the model in amber, the rest in white
   const lead = r?.edit && r.edit.kind !== "same" ? title.indexOf(r.edit.headline) : -1;
+  const end = lead + (r?.edit?.headline.length ?? 0);
   let at = 0;
   lines.forEach((l, i) => {
     let x = PAD;
     for (const word of l.split(" ")) {
-      ctx.fillStyle = lead >= 0 && at >= lead ? C.amber : C.ink;
-      ctx.fillText(word, x, 152 + i * lh);
+      // the part of the word inside the edit's span in amber (so a trailing ";" stays white)
+      const hot = lead >= 0 && at >= lead ? Math.max(0, Math.min(word.length, end - at)) : 0;
+      ctx.fillStyle = C.amber; ctx.fillText(word.slice(0, hot), x, 152 + i * lh);
+      ctx.fillStyle = C.ink; ctx.fillText(word.slice(hot), x + ctx.measureText(word.slice(0, hot)).width, 152 + i * lh);
       x += ctx.measureText(`${word} `).width;
       at += word.length + 1;
     }
@@ -174,16 +184,17 @@ function lineage(ctx, r, y) {
   for (let i = 0; i < nodes.length - 1; i++) edge(ctx, nodes[i].x + 10, y, nodes[i + 1].x - 10, y, C.line, true, "card says");
   const p = r.parent, last = nodes[nodes.length - 1];
   if (last) {
-    const ok = p && p.model === last.name && p.median > 0.9;
+    const ok = (p && p.model === last.name && p.median > 0.9) || last.copy;
     const unread = last.claim?.unreadable || last.error;
     const color = ok ? C.teal : unread ? C.muted : C.red;
-    const text = ok ? `weights agree · ${p.median.toFixed(3)}` : unread ? "couldn't be read" : p ? "weights disagree" : "no match";
+    const text = last.copy ? `same weights${r.quant ? ` · ${r.quant.type}` : ""}`
+      : ok ? `weights agree · ${p.median.toFixed(3)}` : unread ? "couldn't be read" : p ? "weights disagree" : "no match";
     edge(ctx, last.x + 12, y, model.x - 18, y, color, !ok, text);
   }
   for (const n of nodes) {
     const isParent = p && n.name === p.model && p.median > 0.9;
-    node(ctx, n.x, y, isParent ? 9 : 6, isParent ? C.teal : "#2c3242", isParent ? null : "#3b4256", isParent ? C.teal : null);
-    label(ctx, n.x, y + 30, n.name, isParent ? C.ink : C.ink2);
+    node(ctx, n.x, y, isParent ? 9 : 6, isParent ? C.teal : "#2c3242", isParent ? null : n.copy ? C.teal : "#3b4256", isParent ? C.teal : null);
+    label(ctx, n.x, y + 30, n.name, isParent || n.copy ? C.ink : C.ink2);
   }
   // a claim the weights disprove: off to the side, struck through in red
   aside.forEach((n, i) => {
@@ -209,11 +220,12 @@ function layers(ctx, r, top, phase) {
   const step = (x1 - x0) / n, bw = Math.max(3, Math.min(16, step * 0.62));
   const rank = r?.edit?.rank || { layers: {}, few: [] };
   ctx.textAlign = "left"; ctx.font = `600 11px ${f.mono}`; ctx.fillStyle = C.muted;
-  ctx.fillText(r?.parent ? `${n} LAYERS · HOW FAR EACH MOVED FROM ${short(r.parent.model, 40).toUpperCase()}` : `LAYERS`, x0, top);
+  const above = r?.quant ? ` ABOVE ${r.quant.type} ROUNDING` : "";
+  ctx.fillText(r?.parent ? `${n} LAYERS · HOW FAR EACH MOVED FROM ${short(r.parent.model, 40).toUpperCase()}${above}` : `LAYERS`, x0, top);
   if (r?.edit) chip(ctx, x1, top - 4, r.edit.kind.replace("_", " "), r.edit.kind === "same" ? C.teal : C.amber, true);
   const dots = [];
   for (let i = 0; i < n; i++) {
-    const l = ids[i], m = r ? moved(corr[l]) : 0.08 + 0.5 * Math.abs(Math.sin(i * 1.7 + phase));
+    const l = ids[i], m = r ? (r.quant ? changed(rank.layers[l]) : moved(corr[l])) : 0.08 + 0.5 * Math.abs(Math.sin(i * 1.7 + phase));
     const cx = x0 + step * (i + 0.5), h = 6 + m * 66;
     if (r && m > 0) {
       ctx.shadowColor = C.amber; ctx.shadowBlur = 14 * m;
@@ -269,7 +281,7 @@ function draw(phase = 0) {
   const r = U.state === "done" ? U.r : null;
   backdrop(ctx, r);
   if (r) {
-    const y = header(ctx, r, r.headline, r.model);
+    const y = header(ctx, r, r.headline, r.quant ? `${r.model} · ${r.quant.type}` : r.model);
     lineage(ctx, r, Math.max(y + 52, 322));
     layers(ctx, r, 432, 0);
     footer(ctx, r);
@@ -286,7 +298,7 @@ function draw(phase = 0) {
     layers(ctx, null, 432, phase);
     if (U.state === "loading") {
       ctx.font = `500 12px ${fonts().mono}`; ctx.fillStyle = C.muted; ctx.textAlign = "left";
-      ctx.fillText(`${((performance.now() - U.t0) / 1000).toFixed(1)} s · a few megabytes, nothing downloaded`, PAD, H - 30);
+      ctx.fillText(`${((performance.now() - U.t0) / 1000).toFixed(1)} s · reading by byte range, nothing downloaded`, PAD, H - 30);
     }
   }
   cv.setAttribute("aria-label", r ? `${r.model}: ${r.headline}` : "Unmask card: no model read yet");
@@ -306,10 +318,11 @@ function details() {
   $("#um-share").hidden = !r;
   if (!r) { el.innerHTML = ""; return; }
   const claims = (r.claims || []).map((c) => {
-    const tone = c.reading === "derived from it" || c.reading === "the same weights" ? "ok" : c.unreadable ? "" : "bad";
+    const tone = /^(derived from it|the same weights|close:)/.test(c.reading) ? "ok" : c.unreadable ? "" : "bad";
     return `<li><span class="um-k">${esc(c.claimed)}</span><code>${esc(c.model)}</code><span class="um-v ${tone}">${esc(c.unreadable ? "couldn't be read" : c.reading)}${c.median != null ? ` · ${c.median.toFixed(4)}` : ""}</span></li>`;
   }).join("") || `<li class="um-none">Its card names no parent.</li>`;
-  const parent = r.parent ? `<p class="um-line">Compared with <code>${esc(r.parent.model)}</code>${r.parent.claimed ? "" : " (found on this machine)"}: median correlation ${r.parent.median.toFixed(4)}.</p>` : "";
+  const copy = r.copy_of ? `<p class="um-line"><code>${esc(r.copy_of.model)}</code> holds the same weights${r.quant ? ` (within ${esc(r.quant.type)} rounding)` : ""}, so the edit is measured against the model it was made from.</p>` : "";
+  const parent = copy + (r.parent ? `<p class="um-line">Compared with <code>${esc(r.parent.model)}</code>${r.parent.claimed ? "" : " (found on this machine)"}: median correlation ${r.parent.median.toFixed(4)}.</p>` : "");
   const rank = r.edit ? Object.entries(r.edit.rank.layers).map(([l, p]) =>
     `<tr><td>L${l}</td><td>${(p.rel * 100).toFixed(2)}%</td><td>${p.top1 == null ? "–" : `${(p.top1 * 100).toFixed(1)}%`}</td><td>${p.top8 == null ? "–" : `${(p.top8 * 100).toFixed(1)}%`}</td><td>${p.k || "–"}</td></tr>`).join("") : "";
   const files = (r.files.findings || []).slice(0, 6).map((f) =>

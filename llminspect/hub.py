@@ -2,16 +2,19 @@
 its weights say whether that's true and what was done to them.
 
   1. Lineage. The card's base_model (and the Hub's base_model tags) name the parents, and their cards name theirs.
-  2. Origin. A few hundred values per tensor, read by byte range from each safetensors file, fingerprint the model
-     (see fingerprint.py) and are compared with each claimed parent and with the models on this machine.
+  2. Origin. A few hundred values per tensor, read by byte range from the safetensors files (or the most precise
+     GGUF file, dequantized; see ggufread.py), fingerprint the model (see fingerprint.py) and are compared with
+     each claimed parent and with the models on this machine.
   3. The edit. Some full rows of each sampled layer's down projection are read from the model and its parent. The
      rank of their difference names the edit: the same direction or few removed from every layer (the mark
      direction removal, or abliteration, leaves), rank-one edits at single layers, a low-rank change like a merged adapter,
-     or a full fine-tune.
+     or a full fine-tune. For a quantized model only what stands out above the quantization's rounding counts.
+     A copy (a re-upload, or a quantization) of its parent is followed up the chain to the edit it carries.
   4. Files. Configs, code and chat templates are small and read whole: code that runs on load, and what the
      template says that the parent's doesn't.
 
-A Hub model costs a few megabytes of reads. Nothing is loaded and nothing runs. A local folder works the same way.
+A Hub model costs a few megabytes of reads (a GGUF file more: its header holds the whole vocabulary). Nothing is
+loaded and nothing runs. A local folder works the same way.
 
     python -m llminspect.hub ORG/NAME [--json]
 """
@@ -32,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import filediff, filescan, fingerprint
+from . import filediff, filescan, fingerprint, ggufread
 
 ROWS = 24           # full rows of a layer's down projection read to measure the rank of its change
 RANK_LAYERS = 6     # layers those rows come from
@@ -44,6 +47,10 @@ FEW = 4             # at most this many directions is "a few"
 LOW_RANK = 0.9      # share in its top LOW_K directions that makes a change low-rank
 LOW_K = 8
 SHARED = 0.8        # overlap between layers' few directions that makes them the same ones
+QUANT_LAYERS = 32   # layers measured in a quantized model, whose fingerprint can't tell which ones moved
+SPIKE = 2.0         # a direction counts above rounding when its energy is this many times the noise edge
+BROAD = 1.5         # the rest counts as a change when it holds this many times the rounding's energy
+POINT = 0.5         # a direction with this share of its weight on one value is a clipped outlier, not an edit
 DOWN = re.compile(r"layers?\.(\d+)\.(mlp\.down_proj|feed_forward\.w2)\.weight$")
 TEXT = {".json", ".jinja", ".py", ".txt", ".model", ".yaml", ".yml"}
 RELATIONS = ("finetune", "adapter", "merge", "quantized")
@@ -66,6 +73,7 @@ class Folder:
         self.name = name or model_name(self.path)
         self.url = None
         self.bytes_read = 0
+        self._gguf = None
 
     def files(self) -> dict[str, int]:
         return {p.relative_to(self.path).as_posix(): p.stat().st_size for p in sorted(self.path.rglob("*"))
@@ -77,7 +85,14 @@ class Folder:
     def headers(self) -> dict:
         return fingerprint._headers(self.path)
 
+    def gguf(self):
+        return _gguf(self)
+
     def signature(self) -> dict:
+        g = self.gguf()
+        if g:
+            stamp = "|".join(f"{f}:{(self.path / f).stat().st_size}:{(self.path / f).stat().st_mtime_ns}" for f in g.files)
+            return fingerprint.cached(f"{self.path.resolve()}:gguf", stamp, lambda: _remote_signature(self))
         return fingerprint.signature(self.path)
 
     def read(self, spans: list[tuple[str, int, int]]) -> list[bytes]:
@@ -115,7 +130,7 @@ class Hub:
         self._client = httpx.Client(timeout=60, follow_redirects=False)
         self._where: dict[str, tuple[str, dict]] = {}
         self._lock = threading.Lock()
-        self._sig = self._heads = self._dir = None
+        self._sig = self._heads = self._dir = self._gguf = None
         self.bytes_read = 0
 
     def files(self) -> dict[str, int]:
@@ -187,9 +202,13 @@ class Hub:
             self._heads = heads
         return self._heads
 
+    def gguf(self):
+        return _gguf(self)
+
     def signature(self) -> dict:
         if self._sig is None:
-            stamp = self.sha
+            g = self.gguf()
+            stamp = f"{self.sha}:" + ",".join(g.files) if g else self.sha
             self._sig = fingerprint.cached(f"hub:{self.name}", stamp, lambda: _remote_signature(self))
         return self._sig
 
@@ -217,7 +236,26 @@ def _claims(base_model, tags: list[str]) -> list[dict]:
     return [{"model": b, "relation": rel.get(b, "finetune")} for b in dict.fromkeys(named + list(rel))]
 
 
+def _gguf(src):
+    """A source's GGUF weights (its most precise quantization), when it has no safetensors weights; else None."""
+    if src._gguf is None:
+        files = src.files()
+        chosen = [] if any(f.endswith(".safetensors") for f in files) else ggufread.choose(files)
+        try:
+            src._gguf = ggufread.Weights(src, chosen, files) if chosen else False
+        except ValueError as exc:
+            raise Unreachable(f"{src.name}: {chosen[0]}: {exc}") from exc
+    return src._gguf or None
+
+
 def _remote_signature(src) -> dict:
+    g = src.gguf()
+    if g:
+        names = [n for n in sorted(g.tensors) if fingerprint.ROLES.search(n) and g.readable(n)]
+        idx = [np.concatenate([np.arange(a, a + n) for a, n in fingerprint.positions(int(np.prod(g.shape(k))))])
+               for k in names]
+        got = g.gather(list(zip(names, idx)))
+        return {k: [g.shape(k), [float(x) for x in v]] for k, (v, _) in zip(names, got)}
     wanted = [(fingerprint.canonical(k), f, e, s) for k, (f, e, s) in sorted(src.headers().items())
               if fingerprint.ROLES.search(k) and e.get("dtype") in fingerprint.DTYPES]
     jobs = [(i, (f, at, n)) for i, (_, f, e, s) in enumerate(wanted) for at, n in fingerprint.spans(e, s)]
@@ -245,8 +283,30 @@ def local_models(roots=None) -> dict[str, Path]:
 
 # ---- the edit: the rank of the difference over full rows ---------------------------------------------------
 
-def _rows(src, layers: list[int]) -> dict[int, np.ndarray]:
-    """ROWS full rows of each layer's down projection, at the same evenly spread rows in every model."""
+def _rows(src, layers: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray | None]]:
+    """ROWS full rows of each layer's down projection, at the same evenly spread rows in every model, with each
+    value's rounding step when the weights are quantized (else None)."""
+    key = tuple(layers)
+    hit = getattr(src, "_rows_seen", {}).get(key)
+    if hit is None:
+        hit = _read_rows(src, layers)
+        src.__dict__.setdefault("_rows_seen", {})[key] = hit
+    return hit
+
+
+def _read_rows(src, layers: list[int]) -> dict:
+    g = src.gguf()
+    if g:
+        want = []
+        for layer in layers:
+            name = f"layers.{layer}.mlp.down_proj.weight"
+            if name in g.tensors and g.readable(name):
+                out_dim, in_dim = g.shape(name)
+                rows = np.linspace(0, out_dim - 1, min(ROWS, out_dim)).round().astype(np.int64)
+                want.append((layer, name, (rows[:, None] * in_dim + np.arange(in_dim)).ravel(), in_dim))
+        got = g.gather([(name, idx) for _, name, idx, _ in want])
+        return {layer: (v.astype(np.float64).reshape(-1, n), s.astype(np.float64).reshape(-1, n))
+                for (layer, _, _, n), (v, s) in zip(want, got)}
     spans, keys = [], []
     for name, (f, e, start) in src.headers().items():
         m = DOWN.search(name)
@@ -260,57 +320,99 @@ def _rows(src, layers: list[int]) -> dict[int, np.ndarray]:
     out: dict[int, list] = {}
     for (layer, dtype), raw in zip(keys, src.read(spans)):
         out.setdefault(layer, []).append(fingerprint.decode(dtype, raw))
-    return {k: np.asarray(v, dtype=np.float64) for k, v in out.items()}
+    return {k: (np.asarray(v, dtype=np.float64), None) for k, v in out.items()}
+
+
+def _energies(d: np.ndarray, noise: np.ndarray | None) -> tuple[np.ndarray, np.ndarray, float]:
+    """The change's directions (over the sampled rows) and the energy of each, and the change's total energy.
+    With rounding noise (the variance of each value's rounding), rows and columns are first scaled so the noise is
+    even, and only directions standing out above it count, plus any broad excess over it."""
+    if noise is None or not noise.any():
+        u, s, _ = np.linalg.svd(d, full_matrices=False)
+        return u, s ** 2, float((s ** 2).sum())
+    floor = noise.max() * 1e-12 + 1e-300
+    wr = np.sqrt(np.maximum(noise.mean(1), floor))
+    wc = np.sqrt(np.maximum((noise / wr[:, None] ** 2).mean(0), floor))
+    dw = d / wr[:, None] / wc[None, :]
+    var = float((noise / wr[:, None] ** 2 / wc[None, :] ** 2).mean())
+    m, n = dw.shape
+    u, s, vt = np.linalg.svd(dw, full_matrices=False)
+    s2 = s ** 2
+    # a direction resting on one value is a value the quantizer clipped (an outlier weight), not an edit: real
+    # edits spread over a row. Those directions are set aside, out of both the change and the noise.
+    keep = (vt ** 2).max(1) < POINT
+    spike = keep & (s2 > SPIKE * n * var * (1 + np.sqrt(m / n)) ** 2)
+    rest = keep & ~spike
+    bulk, expect = float(s2[rest].sum()), float(rest.sum() * n * var)
+    broad = bulk - expect if bulk > BROAD * expect else 0.0
+    top = np.flatnonzero(spike)
+    e = np.concatenate([s2[top] - n * var, np.zeros(int(rest.sum()))])
+    # directions back in the unscaled rows (the scaling bent them), orthonormal again
+    q = np.linalg.qr(wr[:, None] * u[:, top])[0] if len(top) else u[:, :0]
+    # energies back on the unscaled scale: each one's share times the unscaled change's size
+    total = float(e.sum() + broad)
+    scale = float((d ** 2).sum()) / max(float(s2.sum()), 1e-300)
+    return np.concatenate([q, u[:, rest]], axis=1), e * scale, total * scale
 
 
 def _shape_of_change(cand, parent, layers: list[int]) -> dict:
     """Per sampled layer: how large the change is, how many directions hold most of it (k), and whether the
     layers whose change lies in a few directions share them (the overlap of their subspaces, 0..1)."""
     a, b = _rows(cand, layers), _rows(parent, layers)
+    g = cand.gguf()
     per, dirs = {}, {}
     for layer in sorted(set(a) & set(b)):
-        if a[layer].shape != b[layer].shape:
+        (va, sa), (vb, sb) = a[layer], b[layer]
+        if va.shape != vb.shape:
             continue
-        d = a[layer] - b[layer]
-        size = float(np.linalg.norm(d))
-        rel = size / max(float(np.linalg.norm(b[layer])), 1e-30)
-        if size == 0:
+        noise = None if sa is None and sb is None else (
+            (sa if sa is not None else 0) ** 2 + (sb if sb is not None else 0) ** 2) / 12 + np.zeros_like(va)
+        u, e, total = _energies(va - vb, noise)
+        rel = float(np.sqrt(total)) / max(float(np.linalg.norm(vb)), 1e-30)
+        if total <= 0:
             per[layer] = {"rel": 0.0, "top1": None, f"top{LOW_K}": None, "k": 0}
             continue
-        u, s, _ = np.linalg.svd(d, full_matrices=False)
-        e = s ** 2 / float((s ** 2).sum())
-        k = int(np.searchsorted(np.cumsum(e), MOST) + 1)
-        per[layer] = {"rel": round(rel, 5), "top1": round(float(e[0]), 3), f"top{LOW_K}": round(float(e[:LOW_K].sum()), 3), "k": k}
+        share = np.cumsum(e) / total
+        k = int(np.searchsorted(share, MOST) + 1) if len(e) and share[-1] >= MOST else len(e) + 1
+        per[layer] = {"rel": round(rel, 5), "top1": round(float(e[:1].sum() / total), 3),
+                      f"top{LOW_K}": round(float(e[:LOW_K].sum() / total), 3), "k": k}
         if k <= FEW:
             dirs[layer] = u[:, :k]
     few = sorted(dirs)
     pairs = [float(np.linalg.norm(dirs[x].T @ dirs[y]) ** 2) / min(dirs[x].shape[1], dirs[y].shape[1])
              for i, x in enumerate(few) for y in few[i + 1:]]
     return {"layers": {str(k): v for k, v in per.items()}, "few": few,
-            "shared": round(float(np.median(pairs)), 3) if pairs else None}
+            "shared": round(float(np.median(pairs)), 3) if pairs else None,
+            "quant": g.quant if g else None}
 
 
 def _name_edit(sim: dict, change: dict) -> dict:
-    """What was done, from the fingerprint and the rank of the change."""
-    moved = sorted(int(l) for l, c in sim["layers"].items() if int(l) >= 0 and c < 0.99999)
-    total = len([l for l in sim["layers"] if int(l) >= 0])
-    per = change["layers"]
+    """What was done, from the fingerprint and the rank of the change. A quantized model's fingerprint moves in
+    every layer from rounding alone, so there the measured layers say which moved."""
+    per, quant = change["layers"], change.get("quant")
     changed = [l for l, p in per.items() if p["rel"] > 0]
-    if sim["identical"] == sim["tensors"] and not changed:
-        return {"kind": "same", "headline": "the same weights, re-uploaded", "moved_layers": []}
+    if quant:
+        moved, total = sorted(int(l) for l in changed), len([l for l in sim["layers"] if int(l) >= 0])
+        of = f"{total} layers" if len(per) >= total else f"{len(per)} layers read"
+    else:
+        moved = sorted(int(l) for l, c in sim["layers"].items() if int(l) >= 0 and c < 0.99999)
+        of = f"{len([l for l in sim['layers'] if int(l) >= 0])} layers"
+    if not changed and (quant or sim["identical"] == sim["tensors"]):
+        return {"kind": "same", "headline": f"the same weights, {ggufread.described(quant)[1]}" if quant else
+                "the same weights, re-uploaded", "moved_layers": []}
     span = f"layers {moved[0]}–{moved[-1]}" if len(moved) > 1 else f"layer {moved[0]}" if moved else "no sampled layer"
     few, many = change["few"], len(changed)
     one = [l for l in few if per[str(l)]["k"] == 1]
     if many and len(few) >= max(2, 0.6 * many) and (change["shared"] or 0) >= SHARED:
         k = int(np.median([per[str(l)]["k"] for l in few]))
         what = "one direction" if k == 1 else f"{k} directions"
-        kind, head = "direction_removed", f"{what} removed from {len(moved) or many} of {total} layers, the signature of abliteration"
+        kind, head = "direction_removed", f"{what} removed from {len(moved) or many} of {of}, the signature of abliteration"
     elif many and len(one) >= 0.6 * many:
         kind, head = "rank_one", f"separate rank-one edits in {span}, like targeted fact edits"
     elif many and all(p[f"top{LOW_K}"] is not None and p[f"top{LOW_K}"] >= LOW_RANK for p in per.values() if p["rel"] > 0):
         kind, head = "low_rank", f"a low-rank change in {span}, like a merged adapter (LoRA)"
     elif sim["median"] > 0.9:
-        kind, head = "fine_tuned", f"fine-tuned: weights moved in {len(moved)} of {total} layers"
+        kind, head = "fine_tuned", f"fine-tuned: weights moved in {len(moved)} of {of}"
     else:
         kind, head = "retrained", "heavily retrained: little of the parent's weights is left"
     return {"kind": kind, "headline": head, "moved_layers": moved}
@@ -346,10 +448,11 @@ def _ancestry(claims: list[dict], local: dict, depth: int = DEPTH) -> list[dict]
     return out
 
 
-def _verdict(s: dict | None) -> str:
+def _verdict(s: dict | None, quantized=None) -> str:
     if s is None:
         return "another architecture: can't be compared"
-    return ("the same weights" if s["identical"] == s["tensors"] else "derived from it" if s["median"] > 0.9 else
+    return ("the same weights" if s["identical"] == s["tensors"] else "close: the same weights or derived from it, "
+            "told apart by the edit" if quantized and s["median"] > 0.9 else "derived from it" if s["median"] > 0.9 else
             "related, heavily retrained" if s["median"] >= 0.15 else "not derived from it")
 
 
@@ -363,7 +466,11 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
     out = {"model": cand.name, "url": cand.url, "sha": getattr(cand, "sha", None), "lineage": [], "parent": None,
            "edit": None, "checked": [], "not_checked": []}
     if not sig:
-        out["not_checked"].append("origin and edits: no safetensors weights to read")
+        out["not_checked"].append("origin and edits: no safetensors weights, or GGUF weights of a supported "
+                                  "quantization, to read")
+    g = cand.gguf()
+    if g:
+        out["quant"] = {"type": g.quant, "files": g.files}
     lineage = _ancestry(cand.claims(), local)
     out["lineage"] = lineage
 
@@ -375,7 +482,7 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
         if "error" in row:
             tried.append({"model": name, "claimed": relation, "reading": row["error"], "unreadable": True})
             continue
-        if relation in ("quantized", "adapter"):
+        if relation == "adapter" or (relation == "quantized" and not g):
             tried.append({"model": name, "claimed": relation, "reading": f"{relation}: weights aren't comparable"})
             continue
         try:
@@ -386,7 +493,7 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
             tried.append({"model": name, "claimed": relation, "reading": str(exc), "unreadable": True})
             continue
         s = fingerprint.similarity(sig, psig) if _comparable(sig, psig) else None
-        tried.append({"model": name, "claimed": relation, "reading": _verdict(s), "median": s and round(s["median"], 4)})
+        tried.append({"model": name, "claimed": relation, "reading": _verdict(s, g), "median": s and round(s["median"], 4)})
         if s and s["median"] > 0.15 and (best is None or s["median"] > best[2]["median"]):
             best = (name, src, s, psig, True)
     if sig and (best is None or best[2]["median"] <= 0.9):  # the claim fails or is missing: look on this machine
@@ -402,32 +509,74 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
                 best = (src.name, src, s, src.signature(), False)
     out["claims"] = tried
 
+    read_from = [cand]
     if best:
         name, src, s, psig, claimed = best
-        out["parent"] = {"model": name, "claimed": claimed, "reading": _verdict(s), "median": round(s["median"], 4),
+        read_from.append(src)
+        edit = _edit(cand, src, s, say) if s["median"] > 0.9 else None
+        copy, hops = None, 0
+        while edit and edit["kind"] == "same" and hops < DEPTH:  # a copy: what does the model it copies carry?
+            hops += 1
+            up = [c["model"] for c in src.claims()][:1]
+            if not up:
+                break
+            try:
+                nsrc = open_model(up[0], local)
+                say(f"[unmask] {name} is a copy; reading its parent {up[0]}")
+                nsig = nsrc.signature()
+            except Unreachable as exc:
+                out["not_checked"].append(f"edits: {name} is a copy, and its parent {up[0]} couldn't be read ({exc})")
+                break
+            ns = fingerprint.similarity(sig, nsig) if _comparable(sig, nsig) else None
+            if not ns or ns["median"] <= 0.9:
+                break
+            read_from.append(nsrc)
+            nedit = _edit(cand, nsrc, ns, say)
+            if nedit["kind"] == "same":  # the copy and its parent both match: the rounding hides what parts them
+                out["not_checked"].append(f"edits: {name} and its parent {up[0]} both match; "
+                                          f"{g.quant if g else 'the'} rounding hides any difference between them")
+                break
+            copy = copy or {"model": name, "headline": edit["headline"]}
+            name, src, s, edit = up[0], nsrc, ns, nedit
+        if copy:
+            out["copy_of"] = copy
+            for c in tried:
+                if c["model"] == copy["model"]:
+                    c["reading"] = copy["headline"]
+        out["parent"] = {"model": name, "claimed": claimed, "reading": _verdict(s, g), "median": round(s["median"], 4),
                          "layers": s["layers"]}
-        if s["median"] > 0.9:
-            moved = [int(l) for l, c in s["layers"].items() if int(l) >= 0 and c < 0.99999]
-            pool = moved or [int(l) for l in s["layers"] if int(l) >= 0]
-            pick = sorted({pool[int(i)] for i in np.linspace(0, len(pool) - 1, min(RANK_LAYERS, len(pool))).round()}) if pool else []
-            say(f"[unmask] reading {ROWS} rows of {len(pick)} layers to measure the change")
-            change = _shape_of_change(cand, src, pick) if pick else {"layers": {}, "few": [], "shared": None}
-            out["edit"] = _name_edit(s, change) | {"rank": change}
-            out["checked"].append("edits: the rank of the change in sampled layers")
+        if edit:
+            out["edit"] = edit
+            out["checked"].append("edits: the rank of the change in sampled layers" +
+                                  (f", above the rounding of {g.quant}" if g else ""))
         out["checked"].append("origin: fingerprint against the claimed parents and this machine's models")
     elif sig:
         out["not_checked"].append("edits: no parent found to compare with (claimed parents unreadable, unrelated "
                                   "or another architecture, and no local model matches)")
+    if g:
+        out["not_checked"].append(f"edits smaller than {g.quant}'s rounding")
 
     say("[unmask] reading configs, code and templates")
-    out["files"] = _files(cand, best[1] if best else None)
+    out["files"] = _files(cand, best and src)
     out["checked"].append("files: code that runs on load, configs and chat templates")
     out["not_checked"] += ["behavior: what the model says (run the Behavior step with the parent loaded)",
                            "capability: what the edit cost on tasks"]
     out["headline"] = _headline(out)
-    out["bytes_read"] = cand.bytes_read + (best[1].bytes_read if best else 0)
+    out["bytes_read"] = sum(x.bytes_read for x in read_from)
     out["seconds"] = round(time.perf_counter() - t0, 1)
     return out
+
+
+def _edit(cand, parent, s: dict, say) -> dict:
+    """The edit from parent to cand: the rank of the change in the layers the fingerprint saw move (every layer,
+    up to QUANT_LAYERS, in a quantized model, where rounding moves them all)."""
+    every = [int(l) for l in s["layers"] if int(l) >= 0]
+    moved = [l for l in every if s["layers"][str(l)] < 0.99999]
+    pool, n = (every, QUANT_LAYERS) if cand.gguf() else (moved or every, RANK_LAYERS)
+    pick = sorted({pool[int(i)] for i in np.linspace(0, len(pool) - 1, min(n, len(pool))).round()}) if pool else []
+    say(f"[unmask] reading {ROWS} rows of {len(pick)} layers to measure the change")
+    change = _shape_of_change(cand, parent, pick) if pick else {"layers": {}, "few": [], "shared": None}
+    return _name_edit(s, change) | {"rank": change}
 
 
 def _files(cand, parent) -> dict:
@@ -441,7 +590,12 @@ def _files(cand, parent) -> dict:
                             "file": ", ".join(pickles[:3]), "evidence": [],
                             "detail": "Pickle weights can run code when loaded; they aren't read remotely. Check them "
                                       "locally before loading" + (", or load the safetensors copy." if ".safetensors" in formats else ".")})
-    template = filediff.compare_templates(parent.small_files(), cand.small_files()) if parent else []
+    mine, g = cand.small_files(), cand.gguf()
+    if g and isinstance(g.meta.get("tokenizer.chat_template"), str) and not filediff.templates(mine):
+        mine = Path(tempfile.mkdtemp(prefix="llminspect-gguf-"))  # a GGUF file carries its template inside
+        (mine / "tokenizer_config.json").write_text(json.dumps({"chat_template": g.meta["tokenizer.chat_template"]}),
+                                                     encoding="utf-8")
+    template = filediff.compare_templates(parent.small_files(), mine) if parent else []
     return {"count": len(files), "bytes": sum(files.values()), "formats": formats, "findings": findings,
             "template": template}
 
@@ -458,7 +612,10 @@ def _headline(r: dict) -> str:
             f"Compared with {p['model']}, the closest model here: {e['headline']}" if e else f"Closest here: {p['model']}")
     else:
         what = f"{p['model']}, {e['headline']}" if e else p["model"]
-    false = [c["model"] for c in r.get("claims", []) if c["reading"] == "not derived from it"]
+    if r.get("copy_of"):
+        q = (r.get("quant") or {}).get("type")
+        what += f"; {ggufread.described(q)[0]} of {r['copy_of']['model']}" if q else f"; a re-upload of {r['copy_of']['model']}"
+    false =[c["model"] for c in r.get("claims", []) if c["reading"] == "not derived from it"]
     if false and p and not p["claimed"]:
         what += f"; not {', '.join(false)} as its card claims"
     if unread:

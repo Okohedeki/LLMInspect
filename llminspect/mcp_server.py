@@ -152,9 +152,12 @@ def fingerprint_model(candidate: str, roots: list[str] | None = None) -> dict[st
 def unmask_model(model: str, roots: list[str] | None = None) -> dict[str, Any]:
     """What a model really is, without downloading it: its claimed parents and whether its weights agree, what was
     done to them (the same direction or few removed from every layer, rank-one edits, a low-rank adapter merged, or a full
-    fine-tune), and what its configs, code and chat template hold. Reads a few megabytes by byte range.
+    fine-tune), and what its configs, code and chat template hold. Reads a few megabytes by byte range (tens for
+    a large GGUF). A GGUF repo is read through its most precise quantization; `quant` names it, only change above
+    its rounding counts, and a plain quantization of its parent is followed to the edit that parent carries
+    (`copy_of`).
 
-    model: ORG/NAME on the Hugging Face Hub, a model on this machine by that name, or a folder.
+    model: ORG/NAME on the Hugging Face Hub (safetensors or GGUF), a model on this machine by that name, or a folder.
     roots: folders of local models to compare with; defaults to this machine's model caches.
 
     The headline names the parent and the edit. Behavior isn't run; see not_checked."""

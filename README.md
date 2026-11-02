@@ -80,7 +80,13 @@ it is installed), so they run on any machine before anything is trusted:
   their difference: the same direction or few removed from every layer (the mark direction removal,
   or abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full
   fine-tune. Configs, code and chat templates are read whole and checked as above. Gated parents need
-  a Hugging Face login or `HF_TOKEN`; the token goes to the Hub only. Safetensors only for now.
+  a Hugging Face login or `HF_TOKEN`; the token goes to the Hub only.
+  GGUF repos work too: the most precise quantization in the repo is read by range and dequantized, with
+  each value's rounding step, so only change that stands out above the rounding counts. A GGUF that is a
+  plain quantization of its claimed parent is followed up to that parent's own parent, and the edit is
+  named there. This holds from Q8_0 down to about Q3_K; Q2_K's rounding can hide an abliteration, and the
+  result says so. Supported types: F32, F16, BF16, Q4_0 to Q8_0, the K-quants, IQ4_NL and IQ4_XS. A GGUF
+  read costs more (tens of megabytes for an 8B model), because its header carries the whole vocabulary.
 
 With `deep` (`--deep` in a terminal), the check also asks a running LLMInspect server that has the base
 model loaded to run the deploy scan (below) for what changed inside the weights: where, how concentrated,
