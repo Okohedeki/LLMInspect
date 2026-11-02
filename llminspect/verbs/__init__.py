@@ -32,9 +32,11 @@ def device(model) -> torch.device:
 
 
 def encode(tok, text: str, chat: bool = False) -> torch.Tensor:
-    """Token ids for a text (a user message under the chat template when chat=True and the tokenizer has one)."""
+    """Token ids for a text (a user message under the chat template when chat=True and the tokenizer has one).
+    Reasoning models answer directly (thinking off), so the reply's first tokens are its answer."""
     if chat and getattr(tok, "chat_template", None):
-        ids = tok.apply_chat_template([{"role": "user", "content": text}], add_generation_prompt=True, tokenize=True)
+        ids = tok.apply_chat_template([{"role": "user", "content": text}], add_generation_prompt=True, tokenize=True,
+                                      enable_thinking=False)
         ids = ids["input_ids"] if isinstance(ids, dict) or hasattr(ids, "keys") else ids
     else:
         ids = tok(text, add_special_tokens=True)["input_ids"]
