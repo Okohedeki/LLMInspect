@@ -162,9 +162,10 @@ experience.
 
 ## The UI
 
-The UI is organized around **actions**: Vet, Unmask, Ablate, Scale, Steer, Probe, Monitor, Compare and Check.
+The UI is organized around **actions**: Vet, Unmask, Sweep, Ablate, Scale, Steer, Probe, Monitor, Compare, Check
+and the verbs under More.
 Each action is a short series of steps, and the bar at the top shows where you are and what to do
-next. The steps run across six screens:
+next. The steps run across eight screens:
 
 - **Watch**: the conversation live, a per-token timeline, a token inspector and steering.
 - **Trace**: the conversation next to a graph of the model's heads and neuron clusters.
@@ -178,6 +179,32 @@ next. The steps run across six screens:
   parent marked by whether the weights agree, and one bar per layer lit by how far it moved, with the
   layers whose change lies in the same few directions threaded together. Save image exports the
   card as a PNG.
+- **Sweep**: search the Hub (text, author, tag, sorted by downloads, trend or recency) and check every
+  model it returns. Each model is a tile lit by its most serious risk; the counts per risk sit above
+  and the flagged models below, and any of them opens in Unmask.
+- **Verbs**: every verb below on one screen, its steps as short forms and the result as the hero. A
+  step that changes the weights keeps its change as an edit in Tune's stack, unapplied, until you
+  apply it.
+
+### Verbs
+
+Each verb runs on the loaded model (`POST /llminspect/verbs/{verb}/{step}`, or the `run_verb` MCP tool)
+and reports its measurement beside a control: a random key, direction, vector or unit set.
+
+| Verb | Steps | What it does |
+|---|---|---|
+| Sign | embed, verify | Hide an ownership mark derived from a key in the weights; check a key against 100 random keys |
+| Harden | attack, harden | Remove 1, 2 and 4 refusal directions and steer against them; train a small change so refusals survive that |
+| Scrub | find, remove | Find passages the model completes word for word; unlearn one, with drift on neutral text measured |
+| Audit | diff, behave | Against a base: which tensors moved and what their main change pushes the model to say; where the answers part |
+| Says vs. knows | train, ask | A truth probe on the hidden states; flag answers the probe disagrees with |
+| Faithfulness | run | Plant a hint; count answers that follow it while the reasoning never mentions it |
+| Inject and ask | concept, ask | Add a concept's vector and ask whether the model notices, beside a random vector |
+| Classify | train, run, export | A probe head on the model's own activations, exported as a small file |
+| Rewrite a fact | locate, edit | Find where a subject's state carries an answer; change it with one rank-one edit |
+| Transplant | plan, carry, direction | Carry a fine-tune's difference, or a direction, from another model |
+| Shrink | profile, prune | Measure which heads, neurons and experts your prompts use; prune the rest, beside random pruning |
+| Cap | calibrate, test | Keep a direction within its range on ordinary text while something pushes it |
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).

@@ -606,6 +606,50 @@
     </div>
   </main>
 
+  <main class="gv sweep" id="view-sweep" hidden>
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="sweep" aria-label="Actions in Sweep"></div>
+    <div class="sw-stage" id="sw-stage">
+      <div class="sw-wrap">
+        <form class="sw-form" id="sw-form" role="search" aria-label="Models to sweep">
+          <input id="sw-search" class="um-input" placeholder="search the Hub: abliterated, uncensored, a model family…" autocomplete="off" spellcheck="false" aria-label="Search text">
+          <input id="sw-author" class="um-input sw-small" placeholder="author" autocomplete="off" spellcheck="false" aria-label="Author">
+          <input id="sw-tag" class="um-input sw-small" placeholder="tag" autocomplete="off" spellcheck="false" aria-label="Tag">
+          <select id="sw-sort" class="um-input sw-small" aria-label="Sort by">
+            <option value="downloads">most downloaded</option><option value="trending_score">trending</option>
+            <option value="last_modified">recently updated</option><option value="created_at">newest</option><option value="likes">most liked</option>
+          </select>
+          <input id="sw-limit" class="um-input sw-num" type="number" min="1" max="500" value="50" aria-label="How many models">
+          <label class="sw-check"><input type="checkbox" id="sw-weights"> weights too</label>
+          <button type="submit" class="um-go">Sweep</button>
+        </form>
+        <div class="um-recent" id="sw-history" aria-label="Sweeps run before"></div>
+        <div class="sw-head" id="sw-head" aria-live="polite"></div>
+        <div class="sw-counts" id="sw-counts"></div>
+        <canvas id="sw-field" class="sw-field" role="img" aria-label="One tile per model checked, lit by its most serious risk. Click a tile to unmask it."></canvas>
+        <div class="gv-tip tooltip sw-tip" id="sw-tip" hidden></div>
+        <div class="sw-flagged" id="sw-flagged"></div>
+      </div>
+    </div>
+    </div>
+  </main>
+
+  <main class="gv lab" id="view-lab" hidden>
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="lab" aria-label="Actions in Verbs"></div>
+    <div class="lab-stage">
+      <nav class="lab-verbs" id="lab-verbs" aria-label="Verbs"></nav>
+      <section class="lab-side" aria-labelledby="lab-title">
+        <h2 id="lab-title" class="lab-title"></h2>
+        <p id="lab-lead" class="lab-lead"></p>
+        <div class="lab-steps" id="lab-steps" role="tablist" aria-label="Steps"></div>
+        <form class="lab-form" id="lab-form"></form>
+      </section>
+      <section class="lab-result" id="lab-result" aria-live="polite" aria-label="Result"></section>
+    </div>
+    </div>
+  </main>
+
   <div class="model-picker glass" id="model-picker" hidden role="dialog" aria-labelledby="mp-title">
     <header class="drawer-head">
       <span class="eyebrow" id="mp-title">Models on this machine</span>
@@ -662,6 +706,8 @@
   <script type="module" src="/ui/scan.js"></script>
   <script type="module" src="/ui/vet.js"></script>
   <script type="module" src="/ui/unmask.js"></script>
+  <script type="module" src="/ui/sweep.js"></script>
+  <script type="module" src="/ui/lab.js"></script>
   <script type="module" src="/ui/weights.js"></script>
   <script type="module" src="/ui/verbs.js"></script>
 </body>

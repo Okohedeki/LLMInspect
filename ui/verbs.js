@@ -5,6 +5,7 @@
 // (ui/actionbar.js), and `focus` names the panel a step scrolls to. Explore is no action: each
 // screen's full bar, as before.
 import { defineVerbs, st } from "/ui/actionbar.js";
+import { LAB } from "/ui/lab.js";
 
 const recorded = () => !!st("run");
 const applied = () => st("applied") > 0;
@@ -40,6 +41,8 @@ defineVerbs([
       { id: "neurons", label: "Neurons", view: "neurons" },
       { id: "vet", label: "Vet", view: "vet" },
       { id: "unmask", label: "Unmask", view: "unmask" },
+      { id: "sweep", label: "Sweep", view: "sweep" },
+      { id: "lab", label: "Verbs", view: "lab" },
     ],
   },
   {
@@ -52,6 +55,18 @@ defineVerbs([
       { id: "share", label: "Share", view: "unmask",
         what: "Save the card as an image, or copy its headline and link.",
         tools: ["unmask:save", "unmask:copy"] },
+    ],
+  },
+  {
+    id: "sweep", group: "Trust", label: "Sweep",
+    lead: "Check many Hugging Face Hub models at once, without downloading any: code that runs on load, false parents, template additions, weight edits.",
+    steps: [
+      { id: "sweep", label: "Sweep", view: "sweep", done: () => !!st("swept"),
+        what: "Search the Hub (text, author, tag) and sweep: each model's pickles, configs and templates are read by byte range. Tick weights too to unmask each one.",
+        tools: ["sweep:run"] },
+      { id: "look", label: "Look", view: "sweep",
+        what: "The field lights each model by its most serious risk. Click a tile or a flagged row to open its card in Unmask.",
+        tools: [] },
     ],
   },
   {
@@ -186,17 +201,9 @@ defineVerbs([
         tools: ["workbench:checks"] },
     ],
   },
-], [
-  { label: "Cap", what: "Keep a direction within the range it has on ordinary text, so a persona can't drift." },
-  { label: "Rewrite a fact", what: "Change an answer instead of removing it: one rank-one edit at one MLP layer." },
-  { label: "Inject and ask", what: "Plant a concept in the residual stream and ask whether the model notices it." },
-  { label: "Faithfulness", what: "Did the answer use a hint the reasoning never mentions?" },
-  { label: "Audit", what: "Search, blind, for an objective a model was trained to pursue." },
-  { label: "Says vs. knows", what: "Put what the model answered beside what its hidden states say it believes." },
-  { label: "Transplant", what: "Carry a fine-tune or a direction from one model into another, such as a newer release." },
-  { label: "Shrink", what: "Drop the heads, neurons and experts your own prompts never use, and measure the cost." },
-  { label: "Classify", what: "Train a tiny probe on the model's own activations and ship it as a head that runs for free." },
-  { label: "Sign", what: "Hide an ownership mark in the weights that survives fine-tuning, and check for it later." },
-  { label: "Harden", what: "Make refusals survive direction removal and steering." },
-  { label: "Scrub", what: "Find text the model memorized word for word, remove it, and show the rest still works." },
+  ...Object.entries(LAB).map(([id, v]) => ({
+    id, group: v.group, label: v.label, lead: v.lead, more: true,
+    steps: Object.entries(v.steps).map(([sid, step]) => ({ id: sid, label: step.label, view: "lab", what: step.what,
+      done: () => !!st(`lab_${id}_${sid}`), tools: ["lab:run"] })),
+  })),
 ]);

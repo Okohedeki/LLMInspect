@@ -11,7 +11,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const TAB = { scanner: "Watch", weights: "Trace", workbench: "Tune", neurons: "Neurons", vet: "Vet", unmask: "Unmask" };
+const TAB = { scanner: "Watch", weights: "Trace", workbench: "Tune", neurons: "Neurons", vet: "Vet", unmask: "Unmask", sweep: "Sweep", lab: "Verbs" };
 const TONE = { Test: "ex", Steer: "ex", Change: "ch", Verify: "vf", Ship: "vf", Monitor: "vf" };
 const SAVED = "llminspect-action";
 
@@ -266,15 +266,20 @@ function renderPicker() {
   if (!nav) return;
   const btn = (v) => `<button type="button" class="verb${v === V.cur ? " on" : ""}${v.explore ? " explore" : ""}" data-verb="${v.id}"
     aria-pressed="${v === V.cur}" title="${esc(v.lead)}">${esc(v.label)}</button>`;
-  const groups = [...new Set(V.list.filter((v) => v.group).map((v) => v.group))];
-  nav.innerHTML = V.list.filter((v) => !v.group).map(btn).join("")
-    + groups.map((g) => `<span class="verbs-g">${esc(g)}</span>${V.list.filter((v) => v.group === g).map(btn).join("")}`).join("")
-    + (V.planned.length ? `<button type="button" class="verb more" data-more aria-haspopup="true" title="Actions that aren't built yet">More ▾</button>` : "");
+  const shown = V.list.filter((v) => !v.more || v === V.cur);
+  const groups = [...new Set(shown.filter((v) => v.group).map((v) => v.group))];
+  nav.innerHTML = shown.filter((v) => !v.group).map(btn).join("")
+    + groups.map((g) => `<span class="verbs-g">${esc(g)}</span>${shown.filter((v) => v.group === g).map(btn).join("")}`).join("")
+    + (V.list.some((v) => v.more) ? `<button type="button" class="verb more" data-more aria-haspopup="true" title="Every other action">More ▾</button>` : "");
 }
 
+/** The actions kept off the bar, by group; picking one puts it on the bar while it is the current action. */
 function openPlanned(anchor) {
-  openPopover(anchor, `<p class="vm-head">Planned, not built yet</p>${V.planned.map((p) => `<div class="vm-row"><b>${esc(p.label)}</b><span>${esc(p.what)}</span></div>`).join("")}`,
-    "verbs-more", () => closeMenu());
+  const more = V.list.filter((v) => v.more);
+  const groups = [...new Set(more.map((v) => v.group))];
+  openPopover(anchor, groups.map((g) => `<p class="vm-head">${esc(g)}</p>${more.filter((v) => v.group === g)
+    .map((v) => `<button type="button" class="vm-row" data-pick="${v.id}"><b>${esc(v.label)}</b><span>${esc(v.lead)}</span></button>`).join("")}`).join(""),
+    "verbs-more", (ev) => { const b = ev.target.closest("[data-pick]"); if (b) { closeMenu(); pick(b.dataset.pick); } });
 }
 
 // ---------------------------------------------------------------- a small menu for tools with choices
