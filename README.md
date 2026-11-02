@@ -77,7 +77,8 @@ it is installed), so they run on any machine before anything is trusted:
 
 - **Unmask** (`hub`): the same fingerprint, read from a model on the Hugging Face Hub by byte range
   (a few megabytes, nothing downloaded or loaded), checked against every parent its card and tags
-  claim, and against the models on this machine when the claim fails. Then a few full rows of each
+  claim, against the models on this machine when the claim fails, and, when the card names no parent at
+  all, against Hub models named like it with the edit words taken off (and the parents those name). Then a few full rows of each
   sampled layer's residual writers (the MLP's down projection, a mixture of experts' shared expert,
   attention's output), read from the model and its parent, name the edit by the rank of their difference: the same direction or few removed from every layer (the mark direction removal,
   or abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full

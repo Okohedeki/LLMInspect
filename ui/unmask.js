@@ -322,7 +322,7 @@ function details() {
     return `<li><span class="um-k">${esc(c.claimed)}</span><code>${esc(c.model)}</code><span class="um-v ${tone}">${esc(c.unreadable ? "couldn't be read" : c.reading)}${c.median != null ? ` · ${c.median.toFixed(4)}` : ""}</span></li>`;
   }).join("") || `<li class="um-none">Its card names no parent.</li>`;
   const copy = r.copy_of ? `<p class="um-line"><code>${esc(r.copy_of.model)}</code> holds the same weights${r.quant ? ` (within ${esc(r.quant.type)} rounding)` : ""}, so the edit is measured against the model it was made from.</p>` : "";
-  const parent = copy + (r.parent ? `<p class="um-line">Compared with <code>${esc(r.parent.model)}</code>${r.parent.claimed ? "" : " (found on this machine)"}: median correlation ${r.parent.median.toFixed(4)}.</p>` : "");
+  const parent = copy + (r.parent ? `<p class="um-line">Compared with <code>${esc(r.parent.model)}</code>${r.parent.claimed ? "" : ` (found ${r.parent.found === "the Hub" ? "on the Hub by name" : "on this machine"})`}: median correlation ${r.parent.median.toFixed(4)}.</p>` : "");
   const rank = r.edit ? Object.entries(r.edit.rank.layers).map(([l, p]) =>
     `<tr><td>L${l}</td><td>${(p.rel * 100).toFixed(2)}%</td><td>${p.top1 == null ? "–" : `${(p.top1 * 100).toFixed(1)}%`}</td><td>${p.top8 == null ? "–" : `${(p.top8 * 100).toFixed(1)}%`}</td><td>${p.k || "–"}</td></tr>`).join("") : "";
   const files = (r.files.findings || []).slice(0, 6).map((f) =>

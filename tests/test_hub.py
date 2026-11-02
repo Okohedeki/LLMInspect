@@ -140,3 +140,21 @@ def test_an_edit_left_out_of_the_mlp_is_read_where_it_is(tmp_path):
     roots, base = setup(tmp_path)
     r = hub.unmask(str(edited(base, tmp_path / "attn", remove_direction_from_attention)), roots=roots)
     assert r["edit"]["kind"] == "direction_removed" and r["edit"]["rank"]["matrix"] == "self_attn.o_proj"
+
+
+def test_an_unnamed_parent_is_searched_for_by_name(monkeypatch):
+    assert hub._core_name("Org/Big-Model-7B-Instruct-abliterated-v2-GGUF") == "Big-Model-7B-Instruct"
+    assert hub._core_name("Org/Model-Q4_K_M") == "Model"
+
+    class Info:
+        def __init__(self, id, tags=(), gated=False):
+            self.id, self.tags, self.gated = id, list(tags), gated
+
+    found = [Info("someone/Big-Model-7B-Instruct-uncensored", ["base_model:finetune:Lab/Big-Model-7B-Instruct"]),
+             Info("Lab/Big-Model-7B-Instruct", gated="manual"), Info("Mirror/Big-Model-7B-Instruct")]
+    monkeypatch.setattr("huggingface_hub.HfApi.list_models", lambda self, **kw: iter(found))
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    cand = type("C", (), {"name": "Org/Big-Model-7B-Instruct-abliterated"})()
+    assert hub._hub_candidates(cand, lambda m: None) == ["Mirror/Big-Model-7B-Instruct",
+                                                         "someone/Big-Model-7B-Instruct-uncensored",
+                                                         "Lab/Big-Model-7B-Instruct"]

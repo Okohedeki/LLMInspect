@@ -522,6 +522,49 @@ def _ancestry(claims: list[dict], local: dict, depth: int = DEPTH) -> list[dict]
     return out
 
 
+EDIT_WORDS = re.compile(r"^(abliterated|ablit|abliteration|uncensored|decensored|heretic|orthogonali[sz]ed|unfiltered|"
+                        r"unaligned|nsfw|gguf|ggml|awq|gptq|exl2|mlx|bnb|4bit|8bit|int4|int8|fp8|fp16|bf16|i1|imatrix|"
+                        r"q\d.*|iq\d.*|v\d+(\.\d+)?|mtp|hf)$", re.I)
+CANDIDATES = 8      # Hub models compared when looking for an unnamed parent
+
+
+def _core_name(name: str) -> str:
+    """A model's name without its org and the words re-uploads and edits add: the name its parent likely has."""
+    base = re.sub(r"(?i)(^|[-_.])i?q\d(_[a-z0-9]+)*(?=$|[-_.])", "", name.split("/")[-1])  # Q4_K_M and the like
+    words = [w for w in re.split(r"[-_. ]+", base) if w]
+    return "-".join(w for w in words if not EDIT_WORDS.match(w))
+
+
+def _hub_candidates(cand, say) -> list[str]:
+    """Likely parents on the Hub for a model whose card names none: models named like it with the edit words
+    taken off, ungated and most downloaded first, then the parents those name."""
+    from huggingface_hub import HfApi
+    core = _core_name(cand.name)
+    if not core:
+        return []
+    say(f"[unmask] its card names no parent; searching the Hub for {core}")
+    api, seen, out = HfApi(), {cand.name.lower()}, []
+    words = core.split("-")
+    for query in dict.fromkeys(["-".join(words), "-".join(words[:-1]) if len(words) > 2 else ""]):
+        if not query:
+            continue
+        try:
+            found = list(api.list_models(search=query, sort="downloads", limit=40, expand=["downloads", "gated", "tags"]))
+        except Exception:  # noqa: BLE001  the search is a guess; without it the result says no parent was found
+            return out
+        clean = [m for m in found if not any(EDIT_WORDS.match(w) and not re.match(r"v\d", w, re.I)
+                                             for w in re.split(r"[-_. ]+", m.id.split("/")[-1]))]
+        for m in clean + [m for m in found if m not in clean]:
+            ids = [m.id] + [t.split(":")[-1] for t in (m.tags or []) if t.startswith("base_model:") and t.count(":") >= 2]
+            for i in ids:
+                if i.lower() not in seen and not (m.gated and i == m.id and not os.environ.get("HF_TOKEN")):
+                    seen.add(i.lower())
+                    out.append(i)
+        if len(out) >= CANDIDATES:
+            break
+    return out[:CANDIDATES]
+
+
 def _verdict(s: dict | None, quantized=None) -> str:
     if s is None:
         return "another architecture: can't be compared"
@@ -569,7 +612,7 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
         s = fingerprint.similarity(sig, psig) if _comparable(sig, psig) else None
         tried.append({"model": name, "claimed": relation, "reading": _verdict(s, g), "median": s and round(s["median"], 4)})
         if s and s["median"] > 0.15 and (best is None or s["median"] > best[2]["median"]):
-            best = (name, src, s, psig, True)
+            best = (name, src, s, psig, "card")
     if sig and (best is None or best[2]["median"] <= 0.9):  # the claim fails or is missing: look on this machine
         for name, folder in sorted(local.items()):
             if isinstance(cand, Folder) and folder.resolve() == cand.path.resolve():
@@ -580,12 +623,29 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
             src = Folder(folder)
             s = fingerprint.similarity(sig, src.signature())
             if s and s["median"] > 0.9 and (best is None or s["median"] > best[2]["median"]):
-                best = (src.name, src, s, src.signature(), False)
+                best = (src.name, src, s, src.signature(), "this machine")
+    if sig and (best is None or best[2]["median"] <= 0.9) and isinstance(cand, Hub):  # nor here: search the Hub
+        for name in _hub_candidates(cand, say):
+            try:
+                src = open_model(name, local)
+                if not _comparable(sig, {fingerprint.canonical(k): [v[1].get("shape")] for k, v in src.headers().items()
+                                         if fingerprint.ROLES.search(k)}):
+                    continue
+                say(f"[unmask] {name}: comparing a likely parent from the Hub")
+                psig = src.signature()
+            except (Unreachable, OSError, ValueError):
+                continue
+            s = fingerprint.similarity(sig, psig) if _comparable(sig, psig) else None
+            if s and s["median"] > 0.9 and (best is None or s["median"] > best[2]["median"]):
+                best = (name, src, s, psig, "the Hub")
+                if s["median"] > 0.999:
+                    break
     out["claims"] = tried
 
     read_from = [cand]
     if best:
-        name, src, s, psig, claimed = best
+        name, src, s, psig, found = best
+        claimed = found == "card"
         read_from.append(src)
         edit = _edit(cand, src, s, say) if s["median"] > 0.9 else None
         copy, hops = None, 0
@@ -617,7 +677,7 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
             for c in tried:
                 if c["model"] == copy["model"]:
                     c["reading"] = copy["headline"]
-        out["parent"] = {"model": name, "claimed": claimed, "reading": _verdict(s, g), "median": round(s["median"], 4),
+        out["parent"] = {"model": name, "claimed": claimed, "found": found, "reading": _verdict(s, g), "median": round(s["median"], 4),
                          "layers": s["layers"]}
         if edit:
             out["edit"] = edit
@@ -699,6 +759,10 @@ def _remote_pickles(cand, pickles: list[str]) -> tuple[list[dict], list[str]]:
     return out, unread
 
 
+def _where(p: dict) -> str:
+    return "found on the Hub" if p.get("found") == "the Hub" else "here"
+
+
 def _headline(r: dict) -> str:
     p, e = r["parent"], r["edit"]
     unread = [c["model"] for c in r.get("claims", []) if c.get("unreadable")]
@@ -708,7 +772,8 @@ def _headline(r: dict) -> str:
         what = f"Related to {p['model']} but heavily retrained"
     elif not p["claimed"] and (unread or not r.get("claims")):
         what = ("" if r.get("claims") else "Its card names no parent. ") + (
-            f"Compared with {p['model']}, the closest model here: {e['headline']}" if e else f"Closest here: {p['model']}")
+            f"Compared with {p['model']}, the closest model {_where(p)}: {e['headline']}" if e
+            else f"Closest {_where(p)}: {p['model']}")
     else:
         what = f"{p['model']}, {e['headline']}" if e else p["model"]
     if r.get("copy_of"):
