@@ -172,6 +172,25 @@ def unmask_model(model: str, roots: list[str] | None = None) -> dict[str, Any]:
     return r
 
 
+@server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True), structured_output=True)
+def sweep_hub(search: str | None = None, author: str | None = None, tags: list[str] | None = None,
+              sort: Literal["downloads", "likes", "last_modified", "created_at", "trending_score"] = "downloads",
+              limit: int = 20, models: list[str] | None = None, weights: bool = False) -> dict[str, Any]:
+    """Check many Hugging Face Hub models at once, without downloading any: pickle weights parsed by range for code
+    they run on load, configs for code that runs if trusted, chat templates for sandbox escapes. With weights=true
+    each model is also unmasked (claimed parent checked, edit named), a few more megabytes per model.
+
+    search / author / tags / sort / limit pick models from a Hub search (limit at most 50); models adds ids by name.
+
+    Returns how many models carry each risk and the flagged ones, most serious first. A model with no risk only
+    passed these checks; see not_checked."""
+    from . import sweep
+    ids = list(models or [])
+    if search or author or tags or not ids:
+        ids += sweep.select(search, author, tags, sort, min(limit, 50))
+    return sweep.sweep(ids, weights=weights)
+
+
 def main() -> None:
     server.run("stdio")
 

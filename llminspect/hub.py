@@ -5,13 +5,15 @@ its weights say whether that's true and what was done to them.
   2. Origin. A few hundred values per tensor, read by byte range from the safetensors files (or the most precise
      GGUF file, dequantized; see ggufread.py), fingerprint the model (see fingerprint.py) and are compared with
      each claimed parent and with the models on this machine.
-  3. The edit. Some full rows of each sampled layer's down projection are read from the model and its parent. The
+  3. The edit. Some full rows of each sampled layer's residual writers (the MLP's down projection, a mixture of
+     experts' shared expert, attention's output) are read from the model and its parent. The
      rank of their difference names the edit: the same direction or few removed from every layer (the mark
      direction removal, or abliteration, leaves), rank-one edits at single layers, a low-rank change like a merged adapter,
      or a full fine-tune. For a quantized model only what stands out above the quantization's rounding counts.
      A copy (a re-upload, or a quantization) of its parent is followed up the chain to the edit it carries.
   4. Files. Configs, code and chat templates are small and read whole: code that runs on load, and what the
-     template says that the parent's doesn't.
+     template says that the parent's doesn't. Pickle weights are parsed by range too: a PyTorch zip's directory and
+     its .pkl members, or a raw pickle stream up to its first tensor bytes.
 
 A Hub model costs a few megabytes of reads (a GGUF file more: its header holds the whole vocabulary). Nothing is
 loaded and nothing runs. A local folder works the same way.
@@ -22,6 +24,7 @@ loaded and nothing runs. A local folder works the same way.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -31,6 +34,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -51,9 +55,17 @@ QUANT_LAYERS = 32   # layers measured in a quantized model, whose fingerprint ca
 SPIKE = 2.0         # a direction counts above rounding when its energy is this many times the noise edge
 BROAD = 1.5         # the rest counts as a change when it holds this many times the rounding's energy
 POINT = 0.5         # a direction with this share of its weight on one value is a clipped outlier, not an edit
-DOWN = re.compile(r"layers?\.(\d+)\.(mlp\.down_proj|feed_forward\.w2)\.weight$")
+# matrices that write into the residual stream, where a removed direction shows: the dense MLP's down projection,
+# a mixture of experts' shared expert, and attention's output. Each is measured; the edit is named from the one
+# that changed most, as a mixture of experts may leave its shared expert or its attention alone.
+WRITERS = ("mlp.down_proj", "mlp.shared_expert.down_proj", "self_attn.o_proj")
+WRITER = re.compile(r"layers?\.(\d+)\.(mlp\.down_proj|feed_forward\.w2|mlp\.shared_expert\.down_proj|"
+                    r"self_attn\.o_proj)\.weight$")
 TEXT = {".json", ".jinja", ".py", ".txt", ".model", ".yaml", ".yml"}
 RELATIONS = ("finetune", "adapter", "merge", "quantized")
+PICKLES = 16        # pickle files of one repo parsed by range; the rest are listed as unread
+BLOCK = 1 << 18     # a remote pickle file is read in blocks of this size
+PICKLE_BUDGET = 32 << 20  # and never more than this from one file
 
 
 class Unreachable(Exception):
@@ -61,6 +73,46 @@ class Unreachable(Exception):
 
 
 # ---- sources: a Hub repo or a local folder, read through the same calls ------------------------------------
+
+class RangeFile(io.RawIOBase):
+    """A seekable read-only file over a source's byte ranges, fetched in blocks and kept, up to a budget."""
+
+    def __init__(self, src, name: str, size: int, budget: int = PICKLE_BUDGET):
+        self.src, self.name, self.size, self.budget = src, name, size, budget
+        self.pos, self.blocks, self.fetched = 0, {}, 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.pos
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        self.pos = max(0, {io.SEEK_SET: 0, io.SEEK_CUR: self.pos, io.SEEK_END: self.size}[whence] + offset)
+        return self.pos
+
+    def _block(self, k: int) -> bytes:
+        if k not in self.blocks:
+            n = min(BLOCK, self.size - k * BLOCK)
+            if self.fetched + n > self.budget:
+                raise OSError(f"read more than {self.budget >> 20} MB of {self.name} without finding its end")
+            self.blocks[k] = self.src.read([(self.name, k * BLOCK, n)])[0]
+            self.fetched += n
+        return self.blocks[k]
+
+    def readinto(self, buf) -> int:
+        want, got = min(len(buf), max(0, self.size - self.pos)), 0
+        while got < want:
+            k, at = divmod(self.pos, BLOCK)
+            data = self._block(k)[at:at + want - got]
+            buf[got:got + len(data)] = data
+            got += len(data)
+            self.pos += len(data)
+        return got
+
 
 class Folder:
     """A model folder on this machine."""
@@ -283,9 +335,9 @@ def local_models(roots=None) -> dict[str, Path]:
 
 # ---- the edit: the rank of the difference over full rows ---------------------------------------------------
 
-def _rows(src, layers: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray | None]]:
-    """ROWS full rows of each layer's down projection, at the same evenly spread rows in every model, with each
-    value's rounding step when the weights are quantized (else None)."""
+def _rows(src, layers: list[int]) -> dict[tuple[str, int], tuple[np.ndarray, np.ndarray | None]]:
+    """ROWS full rows of each residual writer (WRITERS) in each layer, at the same evenly spread rows in every model,
+    with each value's rounding step when the weights are quantized (else None), by (writer, layer)."""
     key = tuple(layers)
     hit = getattr(src, "_rows_seen", {}).get(key)
     if hit is None:
@@ -294,32 +346,38 @@ def _rows(src, layers: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray | No
     return hit
 
 
+def _writer(name: str) -> tuple[str, int] | None:
+    m = WRITER.search(name)
+    return (m.group(2).replace("feed_forward.w2", "mlp.down_proj"), int(m.group(1))) if m else None
+
+
 def _read_rows(src, layers: list[int]) -> dict:
     g = src.gguf()
     if g:
         want = []
         for layer in layers:
-            name = f"layers.{layer}.mlp.down_proj.weight"
-            if name in g.tensors and g.readable(name):
-                out_dim, in_dim = g.shape(name)
-                rows = np.linspace(0, out_dim - 1, min(ROWS, out_dim)).round().astype(np.int64)
-                want.append((layer, name, (rows[:, None] * in_dim + np.arange(in_dim)).ravel(), in_dim))
+            for role in WRITERS:
+                name = f"layers.{layer}.{role}.weight"
+                if name in g.tensors and g.readable(name):
+                    out_dim, in_dim = g.shape(name)
+                    rows = np.linspace(0, out_dim - 1, min(ROWS, out_dim)).round().astype(np.int64)
+                    want.append(((role, layer), name, (rows[:, None] * in_dim + np.arange(in_dim)).ravel(), in_dim))
         got = g.gather([(name, idx) for _, name, idx, _ in want])
-        return {layer: (v.astype(np.float64).reshape(-1, n), s.astype(np.float64).reshape(-1, n))
-                for (layer, _, _, n), (v, s) in zip(want, got)}
+        return {key: (v.astype(np.float64).reshape(-1, n), s.astype(np.float64).reshape(-1, n))
+                for (key, _, _, n), (v, s) in zip(want, got)}
     spans, keys = [], []
     for name, (f, e, start) in src.headers().items():
-        m = DOWN.search(name)
-        if not m or int(m.group(1)) not in layers or e.get("dtype") not in fingerprint.DTYPES or len(e["shape"]) != 2:
+        w = _writer(name)
+        if not w or w[1] not in layers or e.get("dtype") not in fingerprint.DTYPES or len(e["shape"]) != 2:
             continue
         out_dim, in_dim = e["shape"]
         size = fingerprint.DTYPES[e["dtype"]][1]
         for r in np.linspace(0, out_dim - 1, min(ROWS, out_dim)).round().astype(int):
             spans.append((f, start + e["data_offsets"][0] + int(r) * in_dim * size, in_dim * size))
-            keys.append((int(m.group(1)), e["dtype"]))
-    out: dict[int, list] = {}
-    for (layer, dtype), raw in zip(keys, src.read(spans)):
-        out.setdefault(layer, []).append(fingerprint.decode(dtype, raw))
+            keys.append((w, e["dtype"]))
+    out: dict[tuple, list] = {}
+    for (w, dtype), raw in zip(keys, src.read(spans)):
+        out.setdefault(w, []).append(fingerprint.decode(dtype, raw))
     return {k: (np.asarray(v, dtype=np.float64), None) for k, v in out.items()}
 
 
@@ -357,9 +415,24 @@ def _energies(d: np.ndarray, noise: np.ndarray | None) -> tuple[np.ndarray, np.n
 
 def _shape_of_change(cand, parent, layers: list[int]) -> dict:
     """Per sampled layer: how large the change is, how many directions hold most of it (k), and whether the
-    layers whose change lies in a few directions share them (the overlap of their subspaces, 0..1)."""
+    layers whose change lies in a few directions share them (the overlap of their subspaces, 0..1). Measured in
+    each residual writer both models have; the one that moved in the most layers (then the most) is reported."""
     a, b = _rows(cand, layers), _rows(parent, layers)
     g = cand.gguf()
+    best = None
+    for role in WRITERS:
+        keys = sorted(k for k in set(a) & set(b) if k[0] == role)
+        if not keys:
+            continue
+        r = _writer_change({k[1]: a[k] for k in keys}, {k[1]: b[k] for k in keys})
+        score = (sum(1 for p in r["layers"].values() if p["rel"] > 0), sum(p["rel"] for p in r["layers"].values()))
+        if best is None or score > best[0]:
+            best = (score, r | {"matrix": role})
+    out = best[1] if best else {"layers": {}, "few": [], "shared": None, "matrix": None}
+    return out | {"quant": g.quant if g else None}
+
+
+def _writer_change(a: dict, b: dict) -> dict:
     per, dirs = {}, {}
     for layer in sorted(set(a) & set(b)):
         (va, sa), (vb, sb) = a[layer], b[layer]
@@ -382,8 +455,7 @@ def _shape_of_change(cand, parent, layers: list[int]) -> dict:
     pairs = [float(np.linalg.norm(dirs[x].T @ dirs[y]) ** 2) / min(dirs[x].shape[1], dirs[y].shape[1])
              for i, x in enumerate(few) for y in few[i + 1:]]
     return {"layers": {str(k): v for k, v in per.items()}, "few": few,
-            "shared": round(float(np.median(pairs)), 3) if pairs else None,
-            "quant": g.quant if g else None}
+            "shared": round(float(np.median(pairs)), 3) if pairs else None}
 
 
 def _name_edit(sim: dict, change: dict) -> dict:
@@ -397,6 +469,8 @@ def _name_edit(sim: dict, change: dict) -> dict:
     else:
         moved = sorted(int(l) for l, c in sim["layers"].items() if int(l) >= 0 and c < 0.99999)
         of = f"{len([l for l in sim['layers'] if int(l) >= 0])} layers"
+    if not per and quant:  # rounding hides the fingerprint's answer, and no output projection could be read
+        return {"kind": "unmeasured", "headline": "its edit couldn't be measured through the rounding", "moved_layers": []}
     if not changed and (quant or sim["identical"] == sim["tensors"]):
         return {"kind": "same", "headline": f"the same weights, {ggufread.described(quant)[1]}" if quant else
                 "the same weights, re-uploaded", "moved_layers": []}
@@ -558,7 +632,9 @@ def unmask(model: str, roots=None, say=lambda m: None) -> dict:
 
     say("[unmask] reading configs, code and templates")
     out["files"] = _files(cand, best and src)
-    out["checked"].append("files: code that runs on load, configs and chat templates")
+    out["checked"].append("files: code that runs on load (pickles parsed by range), configs and chat templates")
+    if out["files"]["pickles"]["unread"]:
+        out["not_checked"].append(f"files: {len(out['files']['pickles']['unread'])} more pickle files")
     out["not_checked"] += ["behavior: what the model says (run the Behavior step with the parent loaded)",
                            "capability: what the edit cost on tasks"]
     out["headline"] = _headline(out)
@@ -584,20 +660,43 @@ def _files(cand, parent) -> dict:
     formats = sorted({Path(f).suffix.lower() for f in files if Path(f).suffix.lower() in filescan.WEIGHT_SUFFIXES})
     scan = filescan.scan_repo(cand.small_files(), cand.name)
     findings = [f for f in scan["findings"] if f["level"] != "info" or f["check"] == "code"]
-    pickles = [f for f in files if Path(f).suffix.lower() in filescan.PICKLE_SUFFIXES]
+    pickles = sorted(f for f in files if Path(f).suffix.lower() in filescan.PICKLE_SUFFIXES)
+    unread = []
     if pickles and isinstance(cand, Hub):
-        findings.insert(0, {"level": "runs code on load" if ".safetensors" not in formats else "info", "check": "pickle",
-                            "file": ", ".join(pickles[:3]), "evidence": [],
-                            "detail": "Pickle weights can run code when loaded; they aren't read remotely. Check them "
-                                      "locally before loading" + (", or load the safetensors copy." if ".safetensors" in formats else ".")})
+        found, unread = _remote_pickles(cand, pickles)
+        findings += found
     mine, g = cand.small_files(), cand.gguf()
+    if g and isinstance(cand, Hub):  # a local GGUF's templates were scanned with its other files
+        findings += [asdict(x) for k, v in g.meta.items() if k.startswith("tokenizer.chat_template") and isinstance(v, str)
+                     for x in filescan.template_findings(g.files[0], k, v)]
     if g and isinstance(g.meta.get("tokenizer.chat_template"), str) and not filediff.templates(mine):
         mine = Path(tempfile.mkdtemp(prefix="llminspect-gguf-"))  # a GGUF file carries its template inside
         (mine / "tokenizer_config.json").write_text(json.dumps({"chat_template": g.meta["tokenizer.chat_template"]}),
                                                      encoding="utf-8")
     template = filediff.compare_templates(parent.small_files(), mine) if parent else []
+    order = {lvl: i for i, lvl in enumerate(filescan.LEVELS)}
+    findings.sort(key=lambda f: order[f["level"]])
     return {"count": len(files), "bytes": sum(files.values()), "formats": formats, "findings": findings,
-            "template": template}
+            "template": template, "pickles": {"read": len(pickles) - len(unread), "unread": unread}}
+
+
+def _remote_pickles(cand, pickles: list[str]) -> tuple[list[dict], list[str]]:
+    """Findings from a Hub repo's pickle files, parsed by range without unpickling, and the files left unread."""
+    sizes, out, unread = cand.files(), [], pickles[PICKLES:]
+
+    def one(f):
+        try:
+            fh = io.BufferedReader(RangeFile(cand, f, sizes[f]), BLOCK)
+            found, _ = filescan.scan_pickle_stream(fh, f, Path(f).suffix)
+            return [asdict(x) for x in found]
+        except Exception as exc:  # noqa: BLE001  a broken or unreachable file is a finding, not a crash
+            return [{"level": "format", "check": "pickle", "file": f, "evidence": [],
+                     "detail": f"Couldn't be parsed by range: {type(exc).__name__}: {str(exc)[:200]}."}]
+
+    with ThreadPoolExecutor(4) as ex:
+        for found in ex.map(one, pickles[:PICKLES]):
+            out += found
+    return out, unread
 
 
 def _headline(r: dict) -> str:

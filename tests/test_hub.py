@@ -125,3 +125,18 @@ def test_the_hub_reads_ranges_and_keeps_the_token_off_storage():
     assert h.read([("w.safetensors", 10, 5), ("w.safetensors", 0, 3)]) == [data[10:15], data[:3]]
     assert {a for host, a in seen if host == "store.test"} == {None}
     assert ("hub.test", "Bearer secret") in seen and h.bytes_read == 8
+
+
+def remove_direction_from_attention(m):
+    r = torch.randn(m.config.hidden_size)
+    r /= r.norm()
+    for layer in m.model.layers:
+        w = layer.self_attn.o_proj.weight
+        w.sub_(torch.outer(r, r @ w))
+
+
+def test_an_edit_left_out_of_the_mlp_is_read_where_it_is(tmp_path):
+    """A model can be edited in attention's output alone (a mixture of experts' MLP may not be read at all)."""
+    roots, base = setup(tmp_path)
+    r = hub.unmask(str(edited(base, tmp_path / "attn", remove_direction_from_attention)), roots=roots)
+    assert r["edit"]["kind"] == "direction_removed" and r["edit"]["rank"]["matrix"] == "self_attn.o_proj"

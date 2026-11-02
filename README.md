@@ -47,6 +47,7 @@ Then ask the agent to check a model folder. Its tools:
 | `list_models`, `list_checks` | Models on this machine; checks run before |
 | `scan_files`, `diff_files`, `fingerprint_model` | One check on its own |
 | `unmask_model` | A Hub model's real parents and what was done to them, without downloading it |
+| `sweep_hub` | Many Hub models at once (a search, an author, a tag): who carries which risk |
 
 Without an agent, the same check runs from a terminal, and each part runs on its own:
 
@@ -56,6 +57,7 @@ python -m llminspect.filescan ~/models                # code that runs on load, 
 python -m llminspect.filediff BASE CANDIDATE          # what changed outside the weights
 python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it actually comes from
 python -m llminspect.hub ORG/NAME                     # unmask a Hub model without downloading it
+python -m llminspect.sweep --search TEXT --limit 50   # check many Hub models; add --weights to unmask each
 ```
 
 The file checks need only Python's standard library (the tokenizer comparison uses transformers when
@@ -76,8 +78,8 @@ it is installed), so they run on any machine before anything is trusted:
 - **Unmask** (`hub`): the same fingerprint, read from a model on the Hugging Face Hub by byte range
   (a few megabytes, nothing downloaded or loaded), checked against every parent its card and tags
   claim, and against the models on this machine when the claim fails. Then a few full rows of each
-  sampled layer's down projection, read from the model and its parent, name the edit by the rank of
-  their difference: the same direction or few removed from every layer (the mark direction removal,
+  sampled layer's residual writers (the MLP's down projection, a mixture of experts' shared expert,
+  attention's output), read from the model and its parent, name the edit by the rank of their difference: the same direction or few removed from every layer (the mark direction removal,
   or abliteration, leaves), separate rank-one edits, a low-rank change like a merged adapter, or a full
   fine-tune. Configs, code and chat templates are read whole and checked as above. Gated parents need
   a Hugging Face login or `HF_TOKEN`; the token goes to the Hub only.
@@ -87,6 +89,15 @@ it is installed), so they run on any machine before anything is trusted:
   named there. This holds from Q8_0 down to about Q3_K; Q2_K's rounding can hide an abliteration, and the
   result says so. Supported types: F32, F16, BF16, Q4_0 to Q8_0, the K-quants, IQ4_NL and IQ4_XS. A GGUF
   read costs more (tens of megabytes for an 8B model), because its header carries the whole vocabulary.
+  Pickle weights on the Hub are parsed by range as well: a PyTorch zip's directory and its `.pkl` members,
+  or a raw pickle stream up to its first tensor bytes, so a repo's code-on-load risk costs a megabyte or
+  so per file instead of a download.
+- **Sweep** (`sweep`): the Hub-side checks over many models at once, picked by a Hub search (text, author,
+  tags, sorted by downloads, likes, recency or trend) or by name. Each model is one line of a JSON Lines
+  file as soon as it is checked, so a sweep resumes where it stopped. The summary counts models per risk
+  (code on load, code if trusted, template escapes, false parent claims, template additions, targeted
+  weight edits) and lists the flagged ones, most serious first. Files only, it takes about a second per
+  model; `--weights` unmasks each one too.
 
 With `deep` (`--deep` in a terminal), the check also asks a running LLMInspect server that has the base
 model loaded to run the deploy scan (below) for what changed inside the weights: where, how concentrated,

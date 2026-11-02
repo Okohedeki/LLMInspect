@@ -188,30 +188,36 @@ def _pickle_findings(rel: str, imports: list[tuple[str, str]], problems: list[st
 
 def scan_pickle(path: Path, rel: str) -> tuple[list[Finding], dict]:
     """A pickle-based file: a PyTorch zip (its .pkl members), a numpy file, or a raw pickle stream."""
+    with open(path, "rb") as fh:
+        return scan_pickle_stream(fh, rel, path.suffix)
+
+
+def scan_pickle_stream(fh, rel: str, suffix: str) -> tuple[list[Finding], dict]:
+    """scan_pickle on an open, seekable binary file, such as one read by range from the Hub."""
     info = {"format": "pickle"}
     imports, problems = [], []
-    if zipfile.is_zipfile(path):
+    if zipfile.is_zipfile(fh):
         info["format"] = "pytorch zip"
-        with zipfile.ZipFile(path) as z:
+        with zipfile.ZipFile(fh) as z:
             members = [m for m in z.namelist() if m.endswith(".pkl")]
             info["pickles"] = len(members)
             for m in members:
-                with z.open(m) as fh:
-                    found, probs = pickle_imports(io.BufferedReader(fh))
+                with z.open(m) as member:
+                    found, probs = pickle_imports(io.BufferedReader(member))
                     imports += found
                     problems += probs
     else:
-        with open(path, "rb") as fh:
-            head = fh.read(2)
-            fh.seek(0)
-            if head[:1] != b"\x80" and head[:1] not in (b"(", b"}", b"]", b"c"):
-                info["format"] = "not a pickle"
-                if path.suffix.lower() in (".pkl", ".pickle", ".joblib"):  # compressed (joblib) or another format
-                    return [Finding("format", "pickle", rel, "Not a plain pickle (compressed, or another format), "
-                                    "so it wasn't read; loading it may still unpickle it.")], info
-                return [], info
-            found, problems = pickle_imports(fh)
-            imports += found
+        fh.seek(0)
+        head = fh.read(2)
+        fh.seek(0)
+        if head[:1] != b"\x80" and head[:1] not in (b"(", b"}", b"]", b"c"):
+            info["format"] = "not a pickle"
+            if suffix.lower() in (".pkl", ".pickle", ".joblib"):  # compressed (joblib) or another format
+                return [Finding("format", "pickle", rel, "Not a plain pickle (compressed, or another format), "
+                                "so it wasn't read; loading it may still unpickle it.")], info
+            return [], info
+        found, problems = pickle_imports(fh)
+        imports += found
     info["imports"] = sorted({f"{m}.{n}" for m, n in imports})
     return _pickle_findings(rel, imports, problems), info
 
@@ -314,7 +320,7 @@ def gguf_strings(path: Path, wanted=lambda k: True) -> dict[str, str]:
     return out
 
 
-def _template_findings(rel: str, where: str, text: str) -> list[Finding]:
+def template_findings(rel: str, where: str, text: str) -> list[Finding]:
     hits = sorted({m.group(0) for m in TEMPLATE_GADGETS.finditer(text)})
     if not hits:
         return []
@@ -330,7 +336,7 @@ def scan_gguf(path: Path, rel: str) -> tuple[list[Finding], dict]:
     out = []
     for k, v in meta.items():
         if k.startswith("tokenizer.chat_template"):
-            out += _template_findings(rel, k, v)
+            out += template_findings(rel, k, v)
     return out, {"format": "gguf", "architecture": meta.get("general.architecture"),
                  "chat_templates": sum(k.startswith("tokenizer.chat_template") for k in meta)}
 
@@ -390,7 +396,7 @@ def scan_python(path: Path, rel: str) -> tuple[list[Finding], dict]:
 
 
 def scan_jinja(path: Path, rel: str) -> tuple[list[Finding], dict]:
-    return _template_findings(rel, path.name, path.read_text(encoding="utf-8", errors="replace")), {"format": "template"}
+    return template_findings(rel, path.name, path.read_text(encoding="utf-8", errors="replace")), {"format": "template"}
 
 
 def scan_config(path: Path, rel: str) -> tuple[list[Finding], dict]:
@@ -408,7 +414,7 @@ def scan_config(path: Path, rel: str) -> tuple[list[Finding], dict]:
     template = cfg.get("chat_template")
     for t in (template if isinstance(template, list) else [{"template": template}] if template else []):
         if isinstance(t, dict) and isinstance(t.get("template"), str):
-            out += _template_findings(rel, f"{path.name} {t.get('name') or ''}".strip(), t["template"])
+            out += template_findings(rel, f"{path.name} {t.get('name') or ''}".strip(), t["template"])
     return out, info
 
 

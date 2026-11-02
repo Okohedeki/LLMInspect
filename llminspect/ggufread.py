@@ -23,8 +23,9 @@ TYPES = {0: ("F32", 1, 4), 1: ("F16", 1, 2), 2: ("Q4_0", 32, 18), 3: ("Q4_1", 32
          12: ("Q4_K", 256, 144), 13: ("Q5_K", 256, 176), 14: ("Q6_K", 256, 210), 20: ("IQ4_NL", 32, 18),
          23: ("IQ4_XS", 256, 136), 30: ("BF16", 1, 2)}
 NAMES = {"token_embd.weight": "embed_tokens.weight"}
-BLOCK = re.compile(r"blk\.(\d+)\.(attn_q|ffn_down)\.weight$")
-ROLE = {"attn_q": "self_attn.q_proj", "ffn_down": "mlp.down_proj"}
+BLOCK = re.compile(r"blk\.(\d+)\.(attn_q|ffn_down|ffn_down_shexp|attn_output)\.weight$")
+ROLE = {"attn_q": "self_attn.q_proj", "ffn_down": "mlp.down_proj", "ffn_down_shexp": "mlp.shared_expert.down_proj",
+        "attn_output": "self_attn.o_proj"}
 PERMUTED = {"llama", "granite", "granitemoe"}  # architectures whose query rows the conversion reorders for RoPE
 # quantizations a repo's files are chosen by: Q8_0's rounding is small enough to see through and its values half
 # the size of F16's, then the rest by precision
