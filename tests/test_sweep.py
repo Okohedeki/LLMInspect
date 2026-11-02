@@ -4,6 +4,7 @@
 import json
 import os
 import pickle
+import time
 
 import torch
 
@@ -81,3 +82,16 @@ def test_a_sweep_ranks_risks_and_resumes(tmp_path):
 def test_an_unreadable_model_is_a_row_not_a_crash(tmp_path):
     s = sweep.sweep([str(tmp_path / "missing")], tmp_path / "s.jsonl")
     assert s["errors"] == 1 and s["flagged"] == []
+
+
+def test_a_sweep_job_runs_in_the_background_and_is_listed(tmp_path):
+    a = tiny(tmp_path / "a")
+    job = sweep.start(tmp_path / "sweeps", models=[str(a)])
+    for _ in range(200):
+        if job["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert job["status"] == "ready" and job["done"] == 1 and job["total"] == 1
+    assert sweep.history(tmp_path / "sweeps")[0]["models"] == 1
+    got = sweep.load(tmp_path / "sweeps", job["id"])
+    assert got["summary"]["models"] == 1 and got["rows"][0]["model"] == "a"

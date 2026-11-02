@@ -23,6 +23,8 @@ change the parameters themselves, the way "abliterated" models are made:
   units          scale a set of units together, as one edit: attention heads and groups of
                  MLP neurons, each at its own layer. A knockout made permanent is one of these;
                  it changes the same weights as the matching scale edits.
+  delta          add a change a verb computed (llminspect/verbs: a mark, a rewritten fact, a hardening):
+                 {parameter: tensor} added to the weights, kept on CPU and saved beside the stack.
   checkpoint     put another checkpoint's weights in place (checkpoints.py): every tensor of
                  a candidate that differs from the model's is copied in. It always applies
                  first, so the other edits land on top of the candidate's weights. At most
@@ -54,6 +56,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,7 +72,7 @@ MLP_NORMS = ("pre_feedforward_layernorm", "post_attention_layernorm", "ln_2", "f
 OUTPUT_NORMS = {"attn": "post_attention_layernorm", "mlp": "post_feedforward_layernorm"}
 MLP_NAMES = ("mlp", "feed_forward", "ffn")
 WRITER_NAMES = {"o_proj", "out_proj", "down_proj", "c_proj", "dense_4h_to_h", "wo", "w2"}
-KINDS = ("orthogonalize", "scale", "units", "checkpoint")
+KINDS = ("orthogonalize", "scale", "units", "checkpoint", "delta")
 ORTHO_TARGETS = ("embed", "attn_out", "mlp_out", "attn_in", "mlp_in", "unembed")
 SCALE_TARGETS = ("attn", "mlp", "head", "neuron")
 ROW_CHUNK = 16_384  # rows/columns per fp32 work block, keeps big matrices off the VRAM ceiling
@@ -299,6 +302,11 @@ def attention_heads(attn: nn.Module | None, d_model: int, config=None) -> tuple[
 
 
 @torch.no_grad()
+def _layer_of(name: str) -> str | None:
+    m = re.search(r"layers?\.(\d+)\.", name)
+    return m.group(1) if m else None
+
+
 def remove_from_rows(w: torch.Tensor, v: torch.Tensor, a: float) -> None:
     """Rows of w are residual vectors (embeddings) or readers (W[out, d]): w -= a (w v) v^T."""
     v = v.to(w.device)  # a split model keeps some experts on the CPU
@@ -332,6 +340,7 @@ class WeightEdit:
     note: str = ""
     units: list[dict] | None = None    # units: [{layer, target: head|neuron, index, name, g}]
     checkpoint: dict | None = None     # checkpoint: {spec, folder, name, report, changed: [parameter names]}
+    delta: dict | None = None          # delta: {verb, tensors: [parameter names], info}; the tensors are in the stack
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def summary(self) -> str:
@@ -340,6 +349,9 @@ class WeightEdit:
             n, name = len(self.checkpoint["changed"]), self.checkpoint["name"]
             return (f"checkpoint: {name}, 1 tensor differs" if n == 1 else f"checkpoint: {name}, {n} tensors differ") + \
                 (f" ({self.note})" if self.note else "")
+        if self.kind == "delta":
+            n = len(self.delta["tensors"])
+            return f"{self.delta['verb']}: {n} tensor{'' if n == 1 else 's'} changed" + (f" ({self.note})" if self.note else "")
         if self.kind == "units":
             names = [u.get("name") or f"L{u['layer']} {u['target']}" for u in self.units]
             shown = ", ".join(names[:4]) + (f" +{len(names) - 4} more" if len(names) > 4 else "")
@@ -362,6 +374,8 @@ class WeightEdit:
                 "checkpoint": None if self.checkpoint is None else {
                     "name": self.checkpoint["name"], "spec": self.checkpoint["spec"], "folder": self.checkpoint["folder"],
                     "report": self.checkpoint.get("report"), "tensors": len(self.checkpoint["changed"])},
+                "delta": None if self.delta is None else {"verb": self.delta["verb"], "tensors": len(self.delta["tensors"]),
+                                                          "info": self.delta.get("info")},
                 "enabled": self.enabled, "note": self.note, "summary": self.summary()}
 
 
@@ -375,6 +389,7 @@ class EditStack:
         self._params = dict(subject.model.named_parameters())
         self._names = {id(p): n for n, p in self._params.items()}
         self._readers: dict = {}  # checkpoint edit id -> the reader of its candidate's tensors
+        self._deltas: dict[str, dict[str, torch.Tensor]] = {}  # delta edit id -> {parameter: fp32 CPU tensor}
         self.budget = cpu_budget()
         self.swaps = {"cached": 0, "replay": 0}  # how original-weights views were put back
         self.path: Path | None = None  # where the stack is saved (bind); None: not saved
@@ -394,9 +409,11 @@ class EditStack:
         for e in self.edits.values():
             rows.append({"id": e.id, "kind": e.kind, "layers": e.layers, "targets": e.targets, "direction": e.direction,
                          "strength": e.strength, "factor": e.factor, "index": e.index, "enabled": e.enabled,
-                         "note": e.note, "units": e.units, "checkpoint": e.checkpoint})
+                         "note": e.note, "units": e.units, "checkpoint": e.checkpoint, "delta": e.delta})
             if e.vector is not None:
                 vectors[e.id] = e.vector.detach().float().cpu().contiguous()
+            for name, t in self._deltas.get(e.id, {}).items():
+                vectors[f"{e.id}/{name}"] = t.contiguous()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tensors = self.path.with_suffix(".safetensors")
         if vectors:
@@ -426,7 +443,7 @@ class EditStack:
         try:
             for row in saved.get("edits", []):
                 try:
-                    e = self._restore_edit(row, vectors.get(row["id"]))
+                    e = self._restore_edit(row, vectors if row.get("kind") == "delta" else vectors.get(row["id"]))
                 except (KeyError, TypeError, ValueError, FileNotFoundError) as exc:
                     out["skipped"].append({"edit": row.get("id"), "kind": row.get("kind"), "reason": str(exc).strip("'\"")})
                     continue
@@ -450,6 +467,12 @@ class EditStack:
         kind = row["kind"]
         if kind == "checkpoint":
             e = self._add_checkpoint(row["checkpoint"], row.get("note", ""))
+        elif kind == "delta":
+            saved = vector if isinstance(vector, dict) else {}
+            tensors = {n: saved[f"{row['id']}/{n}"] for n in row["delta"]["tensors"] if f"{row['id']}/{n}" in saved}
+            if len(tensors) != len(row["delta"]["tensors"]):
+                raise ValueError("its saved tensors are missing")
+            e = self.add_delta(row["delta"]["verb"], tensors, row["delta"].get("info"), row.get("note", ""), save=False)
         elif kind == "units":
             e = self._add("units", factor=row.get("factor", 0.0), note=row.get("note", ""), units=row["units"])
         elif kind == "orthogonalize":
@@ -464,6 +487,8 @@ class EditStack:
         self.edits.pop(e.id)
         if e.id in self._readers:
             self._readers[row["id"]] = self._readers.pop(e.id)
+        if e.id in self._deltas:
+            self._deltas[row["id"]] = self._deltas.pop(e.id)
         e.id = row["id"]
         self.edits[e.id] = e
         return e
@@ -536,6 +561,26 @@ class EditStack:
         self.edits[edit.id] = edit
         return edit
 
+    def add_delta(self, verb: str, tensors: dict[str, torch.Tensor], info: dict | None = None, note: str = "",
+                  save: bool = True) -> WeightEdit:
+        """A change a verb computed, {parameter name: tensor to add}, as one edit."""
+        if not tensors:
+            raise ValueError("the change is empty")
+        kept = {}
+        for name, t in tensors.items():
+            if name not in self._params:
+                raise ValueError(f"the model has no parameter {name}")
+            if tuple(t.shape) != tuple(self._params[name].shape):
+                raise ValueError(f"{name}: the change is {tuple(t.shape)}, the parameter {tuple(self._params[name].shape)}")
+            kept[name] = t.detach().float().cpu()
+        layers = sorted({int(m) for m in (_layer_of(n) for n in kept) if m is not None})
+        edit = WeightEdit("delta", layers, ["delta"], note=note, delta={"verb": verb, "tensors": sorted(kept), "info": info})
+        self.edits[edit.id] = edit
+        self._deltas[edit.id] = kept
+        if save:
+            self.save()
+        return edit
+
     def _add_checkpoint(self, checkpoint: dict | None, note: str) -> WeightEdit:
         """A checkpoint edit from {spec, folder, name, report, changed}: the tensors in `changed` are
         copied from the candidate folder when the edit is applied."""
@@ -564,6 +609,7 @@ class EditStack:
     def remove(self, eid: str) -> None:
         self.edits.pop(eid)
         self._readers.pop(eid, None)
+        self._deltas.pop(eid, None)
         self.save()
 
     def set_enabled(self, eid: str, enabled: bool) -> WeightEdit:
@@ -581,6 +627,10 @@ class EditStack:
         """(parameter, in-place operation) pairs that carry out one edit."""
         d, ops = self.s.d_model, []
         model = self.s.model
+        if e.kind == "delta":
+            for name, t in self._deltas[e.id].items():
+                ops.append((self._params[name], lambda p, t=t: p.copy_((p.float() + t.to(p.device)).to(p.dtype))))
+            return ops
         if e.kind == "checkpoint":
             reader = self._readers[e.id]
             reader.require_files()

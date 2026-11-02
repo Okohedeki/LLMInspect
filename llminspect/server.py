@@ -17,6 +17,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import asyncio  # noqa: E402
 import contextlib
 import gc
+import importlib
 import json
 import mimetypes
 import struct
@@ -1287,6 +1288,99 @@ async def forget_step(step: str, request: Request):
         raise HTTPException(404, str(exc)) from exc
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+SWEEPS = settings.data_dir / "sweeps"
+
+
+@app.post("/llminspect/sweep")
+async def sweep_start(request: Request):
+    """Sweep Hub models (llminspect/sweep.py): {search, author, tags, sort, limit, models, weights}. Needs no
+    loaded model. Returns the job; poll GET /llminspect/sweep/{id}."""
+    from . import sweep
+    body = await _body(request)
+    limit = max(1, min(int(body.get("limit") or 50), 500))
+    return sweep.start(SWEEPS, body.get("search") or None, body.get("author") or None, body.get("tags") or None,
+                       body.get("sort") or "downloads", limit, body.get("models") or None, bool(body.get("weights")))
+
+
+@app.get("/llminspect/sweeps")
+async def sweep_list():
+    from . import sweep
+    return await asyncio.to_thread(sweep.history, SWEEPS)
+
+
+@app.get("/llminspect/sweep/{jid}")
+async def sweep_get(jid: str):
+    from . import sweep
+    try:
+        return await asyncio.to_thread(sweep.load, SWEEPS, jid)
+    except FileNotFoundError:
+        if jid in sweep.JOBS:
+            return {"id": jid, "job": sweep.JOBS[jid], "summary": None, "rows": []}
+        raise HTTPException(404, f"no sweep {jid}") from None
+
+
+VERBS = ("sign", "transplant", "rewrite", "scrub", "saysknows", "classify", "inject", "harden", "cap", "shrink",
+         "faithfulness", "audit")
+
+
+def _verb(name: str):
+    if name not in VERBS:
+        raise HTTPException(404, f"no verb {name}; use one of {list(VERBS)}")
+    try:
+        return importlib.import_module(f".verbs.{name}", __package__)
+    except ImportError as exc:
+        raise HTTPException(501, f"{name} isn't available: {exc}") from exc
+
+
+@app.get("/llminspect/verbs")
+async def list_verbs():
+    """Every verb with its steps and what each one does (llminspect/verbs)."""
+    out = {}
+    for name in VERBS:
+        try:
+            mod = importlib.import_module(f".verbs.{name}", __package__)
+        except ImportError:
+            continue
+        out[name] = {"about": (mod.__doc__ or "").strip().split("\n\n")[0],
+                     "steps": {k: (fn.__doc__ or "").strip().split("\n\n")[0] for k, fn in mod.STEPS.items()}}
+    return out
+
+
+@app.post("/llminspect/verbs/{name}/{step}")
+async def verb_step(name: str, step: str, request: Request):
+    """Run one step of a verb on the loaded model, holding it so no request runs meanwhile. A step that changes
+    weights returns its change, which is kept as a delta edit (not applied; apply it in the workbench) unless
+    the body says keep: false."""
+    fn = _verb(name).STEPS.get(step)
+    if fn is None:
+        raise HTTPException(404, f"{name} has no step {step}; use one of {sorted(_verb(name).STEPS)}")
+    body = await request.json()
+    rec = recorder()
+
+    def run():
+        if not rec.lock.acquire(timeout=1.0):
+            raise Busy("the model is generating; try again when the request finishes")
+        try:
+            out = fn(rec.s.model, rec.s.tokenizer, body)
+        finally:
+            rec.lock.release()
+        delta = out.pop("delta", None)
+        if delta is not None and body.get("keep", True):
+            with rec.lock:
+                out["edit"] = rec.edits.add_delta(name, delta, info=out.get("record"),
+                                                  note=str(body.get("note") or step)).describe()
+        return out
+
+    try:
+        return await asyncio.to_thread(run)
+    except Busy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (TypeError, ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc).strip("'\"")) from exc
 
 
 @app.websocket("/llminspect/live")

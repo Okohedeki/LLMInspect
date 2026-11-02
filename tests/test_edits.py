@@ -119,3 +119,28 @@ def test_bad_edits_are_rejected(subject):
         stack.add("orthogonalize", "0", ["attn_out"], vector=torch.ones(D + 1))
     with pytest.raises(ValueError):
         stack.add("scale", "0", ["nothing"])
+
+
+def test_a_verbs_delta_applies_reverts_and_comes_back_from_disk(subject, tmp_path):
+    before = snapshot(subject.model)
+    name = "model.layers.1.mlp.down_proj.weight"
+    change = torch.randn_like(before[name]) * 0.01
+    subject.spec = "tiny"
+    stack = EditStack(subject).bind(tmp_path / "stack.json")
+    e = stack.add_delta("sign", {name: change}, {"layers": [1]}, note="mark")
+    assert e.layers == [1] and "sign: 1 tensor changed" in e.summary()
+    stack.apply()
+    torch.testing.assert_close(dict(subject.model.named_parameters())[name].detach(), before[name] + change)
+    stack.revert()
+    assert all(torch.equal(p, before[n]) for n, p in subject.model.named_parameters())
+    stack.apply()
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    for f in ("stack.json", "stack.safetensors"):
+        (saved / f).write_bytes((tmp_path / f).read_bytes())
+    stack.revert()
+    out = EditStack(subject).bind(saved / "stack.json").load()
+    assert out["restored"] == 1 and out["applied"] == [e.id]
+    torch.testing.assert_close(dict(subject.model.named_parameters())[name].detach(), before[name] + change)
+    with pytest.raises(ValueError):
+        stack.add_delta("x", {name: torch.zeros(3)})

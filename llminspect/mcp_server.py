@@ -19,6 +19,7 @@ at http://127.0.0.1:8765.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -189,6 +190,28 @@ def sweep_hub(search: str | None = None, author: str | None = None, tags: list[s
     if search or author or tags or not ids:
         ids += sweep.select(search, author, tags, sort, min(limit, 50))
     return sweep.sweep(ids, weights=weights)
+
+
+@server.tool(structured_output=True)
+def run_verb(verb: str, step: str, body: dict[str, Any] | None = None, server_url: str | None = None) -> dict[str, Any]:
+    """Run one step of a verb on the model a running LLMInspect server has loaded (LLMINSPECT_URL, default
+    http://127.0.0.1:8765). Verbs: sign (mark the weights, verify a mark), transplant (carry a fine-tune or a
+    direction from another model), rewrite (change one fact), scrub (find and remove memorized text), saysknows
+    (answers beside a truth probe), classify (a probe head on the model's activations), inject (plant a concept
+    and ask), harden (attack refusals, make them survive), cap (keep a direction in range), shrink (prune what your
+    prompts don't use), faithfulness (hints used but not said), audit (what a fine-tune changed, blind).
+
+    GET {server}/llminspect/verbs lists each verb's steps. A step that changes weights is kept as an edit,
+    unapplied; nothing is applied without the workbench's apply."""
+    import httpx
+    url = (server_url or os.environ.get("LLMINSPECT_URL", "http://127.0.0.1:8765")).rstrip("/")
+    try:
+        r = httpx.post(f"{url}/llminspect/verbs/{verb}/{step}", json=body or {}, timeout=3600)
+    except httpx.HTTPError as exc:
+        return {"error": f"no LLMInspect server at {url} ({type(exc).__name__}); start one with the model loaded"}
+    if r.status_code != 200:
+        return {"error": f"{r.status_code}: {r.text[:500]}"}
+    return r.json()
 
 
 def main() -> None:

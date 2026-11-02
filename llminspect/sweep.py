@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -134,6 +135,64 @@ def summary(rows: list[dict]) -> dict:
             "not_checked": ["behavior: what any model says", "pickle files past the first "
                             f"{hub.PICKLES} of a repo"] + ([] if any(r.get("weights") for r in rows) else
                                                            ["weights: parents and edits (run with --weights)"])}
+
+
+JOBS: dict[str, dict] = {}
+
+
+def start(folder: Path, search=None, author=None, tags=None, sort="downloads", limit=50, models=None,
+          weights=False) -> dict:
+    """Run a sweep in the background into folder/<id>.jsonl; its job (JOBS[id]) shows progress and the summary."""
+    import uuid
+    folder.mkdir(parents=True, exist_ok=True)
+    jid = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+    job = {"id": jid, "status": "running", "query": {"search": search, "author": author, "tags": tags, "sort": sort,
+                                                      "limit": limit, "models": models, "weights": weights},
+           "done": 0, "total": None, "last": None, "summary": None, "error": None}
+    JOBS[jid] = job
+    (folder / f"{jid}.json").write_text(json.dumps(job["query"]), encoding="utf-8")
+
+    def run():
+        try:
+            ids = list(models or [])
+            if search or author or tags or not ids:
+                ids += select(search, author, tags, sort, limit)
+            job["total"] = len(dict.fromkeys(ids))
+
+            def say(m):
+                hit = re.match(r"\[sweep\] (\d+)/\d+ (.*)", m)
+                if hit:
+                    job["done"], job["last"] = int(hit.group(1)), hit.group(2)
+            job["summary"] = sweep(ids, folder / f"{jid}.jsonl", weights, say=say)
+            job["status"] = "ready"
+        except Exception as exc:  # noqa: BLE001  the job says why it stopped
+            job["status"], job["error"] = "error", f"{type(exc).__name__}: {exc}"
+
+    threading.Thread(target=run, daemon=True).start()
+    return job
+
+
+def history(folder: Path) -> list[dict]:
+    """Sweeps run before, newest first: their query and counts."""
+    out = []
+    for q in sorted(folder.glob("*.json"), reverse=True):
+        rows = list(done(q.with_suffix(".jsonl")).values())
+        out.append({"id": q.stem, "query": json.loads(q.read_text(encoding="utf-8")), "models": len(rows),
+                    "flagged": sum(1 for r in rows if r.get("risks")), "running": JOBS.get(q.stem, {}).get("status") == "running"})
+    return out
+
+
+def load(folder: Path, jid: str) -> dict:
+    """A sweep's summary and every row (without the full results), read from its file."""
+    path = folder / f"{Path(jid).name}.jsonl"
+    if not path.exists():
+        raise FileNotFoundError(jid)
+    rows = list(done(path).values())
+    slim = [{k: r.get(k) for k in ("model", "top", "risks", "headline", "error", "weights", "checked_at")} |
+            {"edit": ((r.get("result") or {}).get("edit") or {}).get("kind"),
+             "parent": ((r.get("result") or {}).get("parent") or {}).get("model"),
+             "formats": ((r.get("result") or {}).get("files") or {}).get("formats")} for r in rows]
+    return {"id": jid, "job": JOBS.get(jid), "summary": summary(rows), "rows": slim}
 
 
 def main(argv=None) -> None:
