@@ -195,6 +195,39 @@ def load(folder: Path, jid: str) -> dict:
     return {"id": jid, "job": JOBS.get(jid), "summary": summary(rows), "rows": slim}
 
 
+TONES = {"runs code on load": "#f05252", "imports other code on load": "#f05252", "runs code if trusted": "#f05252",
+         "template": "#f05252", "claims a false parent": "#8b7dff", "template adds text": "#f5a524",
+         "targeted weight edit": "#f5a524", "format": "#6b7385"}
+
+
+def report(s: dict, rows: list[dict], query: str | None = None) -> str:
+    """A sweep as one HTML page with nothing to load: the counts, a tile per model and the flagged ones."""
+    from html import escape
+    tile = lambda r: TONES.get(r.get("top"), "#3a2a2a" if r.get("error") else "#262b38")  # noqa: E731
+    tiles = "".join(f'<i style="background:{tile(r)}" title="{escape(r.get("asked") or r["model"])}: '
+                    f'{escape(r.get("top") or r.get("error") or "no risk found")}"></i>' for r in rows)
+    counts = "".join(f'<div><b style="color:{TONES[k]}">{n}</b><span>{escape(k)}</span></div>'
+                     for k, n in s["counts"].items() if n)
+    flagged = "".join(
+        f'<tr><td><a href="https://huggingface.co/{escape(r["model"])}">{escape(r["model"])}</a></td>'
+        f'<td style="color:{TONES.get(r["top"], "#ccc")}">{escape(r["top"])}</td>'
+        f'<td>{"<br>".join(escape(x["what"]) for x in r["risks"][:3])}</td></tr>' for r in s["flagged"])
+    title = f"Hub sweep: {escape(query)}" if query else "Hub sweep"
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title><style>
+body{{margin:0;background:#07080d;color:#e7e9ef;font:15px/1.5 system-ui,sans-serif}}main{{max-width:1100px;margin:0 auto;padding:32px 16px 64px}}
+h1{{font-size:32px;margin:0 0 4px}}p{{color:#a9afbf}}.n{{display:flex;flex-wrap:wrap;gap:28px;margin:24px 0}}.n div{{display:flex;flex-direction:column}}
+.n b{{font:600 34px/1 ui-monospace,monospace}}.n span{{font:11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;color:#8a91a3;margin-top:6px}}
+.f{{display:flex;flex-wrap:wrap;gap:4px;margin:12px 0 28px}}.f i{{width:22px;height:22px;border-radius:4px}}
+table{{border-collapse:collapse;width:100%;font-size:13px}}td{{padding:8px 10px;border-top:1px solid #1b1f2b;vertical-align:top}}
+td:first-child{{font-family:ui-monospace,monospace}}a{{color:#e7e9ef}}footer{{margin-top:32px;color:#6b7385;font-size:12px}}
+</style></head><body><main><h1>{title}</h1>
+<p>{s["models"]} models checked without downloading any; {len(s["flagged"])} carry a risk, {s["errors"]} couldn't be read.
+Checked {time.strftime("%Y-%m-%d")} with LLMInspect.</p><div class="n">{counts}</div><div class="f">{tiles}</div>
+<table>{flagged}</table><footer>A risk is a fact about a model's files or weights, with its evidence; a model with no risk only
+passed these checks. Not checked: {escape("; ".join(s["not_checked"]))}.</footer></main></body></html>"""
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--search", help="text the model id contains")
@@ -207,11 +240,17 @@ def main(argv=None) -> None:
     ap.add_argument("--workers", type=int, default=WORKERS)
     ap.add_argument("--out", type=Path, default=Path("sweep.jsonl"), help="JSON Lines file, appended and resumed")
     ap.add_argument("--json", action="store_true", help="print the summary as JSON")
+    ap.add_argument("--report", type=Path, help="also write the result as one self-contained HTML page")
     args = ap.parse_args(argv)
     models = list(args.model or [])
     if args.search or args.author or args.tag or not models:
         models += select(args.search, args.author, args.tag, args.sort, args.limit)
     s = sweep(models, args.out, args.weights, args.workers, say=lambda m: print(m, file=sys.stderr))
+    if args.report:
+        rows = [r for m, r in done(args.out).items() if m in set(models)]
+        args.report.write_text(report(s, rows, " ".join(filter(None, [args.search, args.author, *(args.tag or [])])) or None),
+                               encoding="utf-8")
+        print(f"report: {args.report}", file=sys.stderr)
     if args.json:
         print(json.dumps(s, indent=1))
         return

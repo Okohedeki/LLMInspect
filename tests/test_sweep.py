@@ -95,3 +95,11 @@ def test_a_sweep_job_runs_in_the_background_and_is_listed(tmp_path):
     assert sweep.history(tmp_path / "sweeps")[0]["models"] == 1
     got = sweep.load(tmp_path / "sweeps", job["id"])
     assert got["summary"]["models"] == 1 and got["rows"][0]["model"] == "a"
+
+
+def test_a_report_page_lists_the_flagged_models(tmp_path):
+    bad = tiny(tmp_path / "bad")
+    torch.save({"hook": Harmless(print, "inert")}, bad / "extra.bin")
+    s = sweep.sweep([str(bad)], tmp_path / "s.jsonl")
+    page = sweep.report(s, list(sweep.done(tmp_path / "s.jsonl").values()), "test <query>")
+    assert "runs code on load" in page and "builtins.print" in page and "test &lt;query&gt;" in page

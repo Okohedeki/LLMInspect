@@ -57,7 +57,7 @@ python -m llminspect.filescan ~/models                # code that runs on load, 
 python -m llminspect.filediff BASE CANDIDATE          # what changed outside the weights
 python -m llminspect.fingerprint CANDIDATE ~/models   # which local model it actually comes from
 python -m llminspect.hub ORG/NAME                     # unmask a Hub model without downloading it
-python -m llminspect.sweep --search TEXT --limit 50   # check many Hub models; add --weights to unmask each
+python -m llminspect.sweep --search TEXT --limit 50   # check many Hub models; --weights unmasks each, --report page.html
 ```
 
 The file checks need only Python's standard library (the tokenizer comparison uses transformers when
