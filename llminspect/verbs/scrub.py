@@ -164,7 +164,7 @@ def remove(model, tok, body: dict) -> dict:
     full = ids[None].to(dev)
     tgt = ids[prefix:prefix + check].to(dev)
     history = []
-    with torch.enable_grad(), contextlib.ExitStack() as st:
+    with torch.enable_grad(), verbs.frozen(model), contextlib.ExitStack() as st:
         for (_, module), (a, b) in zip(targets, factors):
             st.enter_context(forward_hook(module, low_rank(a, b)))
         for _ in range(steps):

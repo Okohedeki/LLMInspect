@@ -1635,3 +1635,19 @@ td.still { color: var(--critical); }
 .verbs-more { max-height: 70vh; overflow: auto; max-width: 420px; }
 .lab-edit .tbtn { background: #f5a524; color: #1a1205; border: 0; font-weight: 600; opacity: 1; }
 .lab-edit .tbtn:hover { filter: brightness(1.08); }
+
+/* ---- phones: the top bar wraps into two rows (actions scroll sideways), and the new screens scroll as a page ---- */
+@media (max-width: 720px) {
+  .topbar { height: auto; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+  .topbar .verbs { order: 10; flex: 1 1 100%; }
+  .topbar .run-pick, .topbar .do-btn kbd { display: none; }
+  .topbar .model-badge { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (max-width: 900px) {
+  .gv.sweep, .gv.lab { height: auto; }
+  .sw-stage { flex: none; overflow: visible; }
+  .sw-wrap { padding: 16px 12px 40px; }
+  .sw-form .um-input, .sw-small { flex: 1 1 calc(50% - 8px); min-width: 0; }
+  .sw-form #sw-search { flex: 1 1 100%; }
+  .lab-stage { flex: none; }
+}

@@ -134,7 +134,7 @@ def summary(rows: list[dict]) -> dict:
                         for r in flagged],
             "not_checked": ["behavior: what any model says", "pickle files past the first "
                             f"{hub.PICKLES} of a repo"] + ([] if any(r.get("weights") for r in rows) else
-                                                           ["weights: parents and edits (run with --weights)"])}
+                                                           ["weights: parents and edits (sweep with weights too, or --weights)"])}
 
 
 JOBS: dict[str, dict] = {}

@@ -99,5 +99,18 @@ def hooked(model, layer: int, fn):
         h.remove()
 
 
+@contextlib.contextmanager
+def frozen(model):
+    """No gradients for the model's own weights, for a step that trains only a small change of its own."""
+    flags = [(q, q.requires_grad) for q in model.parameters()]
+    for q, _ in flags:
+        q.requires_grad_(False)
+    try:
+        yield model
+    finally:
+        for q, flag in flags:
+            q.requires_grad_(flag)
+
+
 def unit(v: torch.Tensor) -> torch.Tensor:
     return v / v.norm().clamp_min(1e-12)

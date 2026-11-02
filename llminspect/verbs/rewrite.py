@@ -265,6 +265,22 @@ def _measure(model, tok, prompts: list[str], new: str, subject: str) -> list[dic
     return rows
 
 
+def _solve(model, module, rank_one, batch, delta, opt, penalty: float, scale: float, steps: int, history: list) -> None:
+    """Adam on the value change: the new answer's loss after every context, plus a norm penalty."""
+    with torch.enable_grad(), forward_hook(module, rank_one):
+        for _ in range(steps):
+            nll = 0.0
+            for full, n_ctx in batch:
+                lp = torch.log_softmax(model(full[None]).logits[0, n_ctx - 1:-1].float(), -1)
+                nll = nll - lp.gather(1, full[n_ctx:, None]).mean() / len(batch)
+            loss = nll + penalty * (delta * delta).sum() / scale
+            (g,) = torch.autograd.grad(loss, [delta])
+            delta.grad = g
+            opt.step()
+            opt.zero_grad(set_to_none=True)
+            history.append(float(nll.detach()))
+
+
 def edit(model, tok, body: dict) -> dict:
     """One rank-one change to a layer's down projection that makes the prompt's answer the new one."""
     prompt, subject, new = body.get("prompt") or "", body.get("subject") or "", body.get("new") or ""
@@ -316,18 +332,8 @@ def edit(model, tok, body: dict) -> dict:
         return o + (coef[..., None] * delta).to(o.dtype)
 
     history = []
-    with torch.enable_grad(), forward_hook(module, rank_one):
-        for _ in range(steps):
-            nll = 0.0
-            for full, n_ctx in batch:
-                lp = torch.log_softmax(model(full[None]).logits[0, n_ctx - 1:-1].float(), -1)
-                nll = nll - lp.gather(1, full[n_ctx:, None]).mean() / len(batch)
-            loss = nll + penalty * (delta * delta).sum() / scale
-            (g,) = torch.autograd.grad(loss, [delta])
-            delta.grad = g
-            opt.step()
-            opt.zero_grad(set_to_none=True)
-            history.append(float(nll.detach()))
+    with verbs.frozen(model):  # only the value change is solved for
+        _solve(model, module, rank_one, batch, delta, opt, penalty, scale, steps, history)
 
     d = delta.detach()
     change = torch.outer(d, u)  # [d_out, d_in]
