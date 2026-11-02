@@ -39,7 +39,9 @@ server = MCPServer(
         "when you know the model it should derive from, otherwise the closest local model is used. Use deep=true "
         "only when a LLMInspect server with the base loaded is running. Findings are evidence, never a verdict: "
         "don't tell the user a model is safe because nothing was found; say what was checked (summary.checked) "
-        "and what wasn't (not_checked)."),
+        "and what wasn't (not_checked). For a model on the Hugging Face Hub, unmask_model reads it by byte range "
+        "without downloading it; sweep_hub does that for many at once. run_verb runs a verb (sign, harden, audit, "
+        "scrub and the rest) on the model a running server has loaded; a change it makes is kept unapplied."),
 )
 
 
