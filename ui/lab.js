@@ -84,7 +84,11 @@ export const LAB = {
       calibrate: { label: "Calibrate", what: "The direction's range on ordinary text.", fields: [F("vector", "json", "Vector"), F("layer", "num", "Layer")] },
       test: { label: "Test", what: "A push along the direction, with and without the cap.", fields: [F("vector", "json", "Vector", { from: "calibrate.vector" }),
         F("layer", "num", "Layer", { from: "calibrate.layer" }), F("low", "num", "Low", { from: "calibrate.low" }), F("high", "num", "High", { from: "calibrate.high" }),
-        F("prompts", "area", "Prompts"), F("push", "num", "Push", { value: 8 })] } } },
+        F("prompts", "area", "Prompts"), F("push", "num", "Push", { value: 8 })] },
+      keep: { label: "Keep", what: "Cap the live model: every reply from now on keeps the direction within these bounds. Remove it under Steering in Watch.",
+        fields: [F("name", "text", "Name", { value: "cap" }), F("vector", "json", "Vector", { from: "calibrate.vector" }), F("layer", "num", "Layer", { from: "calibrate.layer" }),
+          F("low", "num", "Low", { from: "calibrate.low" }), F("high", "num", "High", { from: "calibrate.high" })],
+        post: (b) => ({ url: "/llminspect/interventions", body: { direction: b.name || "cap", mode: "cap", vector: b.vector, layer: b.layer, value: b.low, high: b.high } }) } } },
 };
 
 const L = { verb: "sign", step: null, results: {}, inputs: {}, busy: false, error: "", catalog: null };
@@ -140,7 +144,8 @@ async function run(ev) {
   try { body = bodyOf($("#lab-form"), spec); } catch (err) { L.error = `A field isn't valid JSON: ${err.message}`; render(); return; }
   L.busy = true; L.error = ""; render();
   try {
-    const r = await fetch(`/llminspect/verbs/${L.verb}/${L.step}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const call = spec.post ? spec.post(body) : { url: `/llminspect/verbs/${L.verb}/${L.step}`, body };
+    const r = await fetch(call.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(call.body) });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(out.detail || `${r.status}`);
     L.results[`${L.verb}.${L.step}`] = { ...out, _body: body };

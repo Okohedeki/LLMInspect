@@ -54,3 +54,14 @@ def test_clamp_holds_a_pushed_projection_in_range(setup):
         assert s["pushed"]["in_range"] < 0.5 and s["pushed"]["max_excursion"] > width
         assert s["pushed_clamped"]["in_range"] == 1.0 and s["pushed_clamped"]["max_excursion"] == 0.0
         assert s["clamped"]["in_range"] == 1.0
+
+
+def test_the_runtime_cap_holds_the_projection_and_leaves_the_sink():
+    from llminspect.recorder.capture import Intervention
+    v = torch.zeros(8)
+    v[0] = 1.0
+    h = torch.randn(1, 5, 8) * 4
+    iv = Intervention(0, "cap", "x", v, value=-1.0, high=1.0)
+    out = iv.apply(h.clone())
+    assert torch.equal(out[:, 0], h[:, 0])
+    assert out[0, 1:, 0].abs().max() <= 1.0 + 1e-6 and torch.equal(out[..., 1:], h[..., 1:])

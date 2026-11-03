@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import torch
 
 LN2 = math.log(2)
-MODES = ("add", "ablate", "clamp", "write")
+MODES = ("add", "ablate", "clamp", "write", "cap")
 PHASES = ("all", "prefill", "gen")
 
 
@@ -27,6 +27,8 @@ class Intervention:
     ablate: h -= (h . v) v
     clamp:  h += (value - h . v) v
     write:  h += value * v            (a fixed write: a steered neuron, see recorder/neurons.py)
+    cap:    h . v held within [value, high]: only what leaves the range moves (a persona kept in its
+            ordinary range; verbs/cap.py calibrates it). A pass's first token, the attention sink, is left alone.
 
     `knob` names the saved knob (recorder/knobs.py) a steered neuron belongs to, if it was steered with one.
     """
@@ -41,6 +43,7 @@ class Intervention:
     enabled: bool = True
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     knob: str | None = None
+    high: float | None = None
 
     def applies(self, phase: str, run_id: str | None) -> bool:
         return (self.enabled and (self.phase == "all" or self.phase == phase)
@@ -53,6 +56,11 @@ class Intervention:
         if self.mode == "write":
             return h + self.value * v
         proj = (h * v).sum(-1, keepdim=True)
+        if self.mode == "cap":
+            out = h + (proj.clamp(self.value, self.high if self.high is not None else float("inf")) - proj) * v
+            if out.dim() == 3 and out.shape[1] > 1:
+                out[:, 0] = h[:, 0]
+            return out
         if self.mode == "ablate":
             return h - proj * v
         return h + (self.value - proj) * v
@@ -60,7 +68,7 @@ class Intervention:
     def describe(self) -> dict:
         return {"id": self.id, "layer": self.layer, "mode": self.mode, "direction": self.direction,
                 "strength": self.strength, "value": self.value, "phase": self.phase,
-                "run": self.run, "enabled": self.enabled, "knob": self.knob}
+                "run": self.run, "enabled": self.enabled, "knob": self.knob, "high": self.high}
 
 
 class LayerTap:

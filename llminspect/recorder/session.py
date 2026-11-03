@@ -240,10 +240,18 @@ class Recorder:
 
     def add_intervention(self, direction: str, mode: str, layer: int | None = None, strength: float = 0.0,
                          value: float = 0.0, phase: str = "all", run: str | None = None,
-                         seed: int | None = None) -> Intervention:
+                         seed: int | None = None, high: float | None = None,
+                         vector: list[float] | None = None) -> Intervention:
+        """A runtime edit along a saved direction, a random one, or a `vector` a verb returned (named `direction`)."""
         if mode not in MODES or phase not in PHASES:
             raise ValueError(f"mode must be one of {MODES}, phase one of {PHASES}")
-        if direction == "random":
+        if mode == "cap" and (high is None or float(high) < float(value)):
+            raise ValueError("a cap needs value (the low bound) and high, with high ≥ value")
+        if vector is not None:
+            vector = torch.tensor(vector, dtype=torch.float32)
+            if vector.shape != (self.s.d_model,) or not float(vector.norm()) > 0:
+                raise ValueError(f"vector must have {self.s.d_model} values, not all zero")
+        elif direction == "random":
             vector = torch.randn(self.s.d_model, generator=torch.Generator().manual_seed(seed or 0))
             direction = f"random(seed={seed or 0})"
         else:
@@ -254,7 +262,8 @@ class Recorder:
         if layer is None or not 0 <= int(layer) < self.s.n_layers:
             raise ValueError(f"layer must be in 0..{self.s.n_layers - 1}")
         vector = (vector / vector.norm()).to(self.s.device, torch.float32)
-        iv = Intervention(int(layer), mode, direction, vector, float(strength), float(value), phase, run)
+        iv = Intervention(int(layer), mode, direction, vector, float(strength), float(value), phase, run,
+                          high=None if high is None else float(high))
         with self.lock:
             self.interventions[iv.id] = iv
             self._sync_interventions()
