@@ -1322,7 +1322,7 @@ async def sweep_get(jid: str):
 
 
 VERBS = ("sign", "transplant", "rewrite", "scrub", "saysknows", "classify", "inject", "harden", "cap", "shrink",
-         "faithfulness", "audit")
+         "faithfulness", "audit", "persona", "traces", "backdoor", "features")
 
 
 def _verb(name: str):
