@@ -72,7 +72,7 @@ export const LAB = {
       diff: { label: "Diff", what: "Features that fire more or less than in the base model on the same texts.",
         fields: [F("path", "text", "Dictionary folder", { from: "info.path" }), F("base", "text", "Base model folder"), F("texts", "area", "Texts")] },
       steer: { label: "Steer", what: "Answers with one feature pushed, beside a random feature.", fields: [F("path", "text", "Dictionary folder", { from: "info.path" }),
-        F("feature", "num", "Feature"), F("strength", "nums", "Strengths", { value: "0, 4, 8" }), F("prompts", "area", "Prompts")] } } },
+        F("feature", "num", "Feature"), F("strength", "nums", "Strengths (share of the residual norm)", { value: "0, 0.1, 0.2, 0.4" }), F("prompts", "area", "Prompts")] } } },
   saysknows: { label: "Says vs. knows", group: "Inspect", lead: "Put what the model answered beside what its hidden states say it believes.",
     steps: {
       train: { label: "Probe", what: "A truth probe per layer from true and false statements, with shuffled labels as the control.",
