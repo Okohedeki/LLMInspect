@@ -67,7 +67,7 @@ export const LAB = {
           F("triggers", "area", "Triggers (optional)")] } } },
   features: { label: "Features", group: "Inspect", lead: "Read, compare and steer the features of a sparse dictionary of the residual stream, loaded from a folder.",
     steps: {
-      info: { label: "Load", what: "The dictionary's layer, size and how well it reconstructs the model's activations.", fields: [F("path", "text", "Dictionary folder")] },
+      info: { label: "Load", what: "The dictionary's layer, size and how well it reconstructs the model's activations. Download one for the loaded model (safetensors) into a folder first.", fields: [F("path", "text", "Dictionary folder (one layer)")] },
       read: { label: "Read", what: "The features active on each token of your texts.", fields: [F("path", "text", "Dictionary folder", { from: "info.path" }), F("texts", "area", "Texts")] },
       diff: { label: "Diff", what: "Features that fire more or less than in the base model on the same texts.",
         fields: [F("path", "text", "Dictionary folder", { from: "info.path" }), F("base", "text", "Base model folder"), F("texts", "area", "Texts")] },

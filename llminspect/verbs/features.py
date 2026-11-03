@@ -326,11 +326,11 @@ def _at(model, layer: int, fn):
 
 
 def _ids(tok, text: str, chat: bool = False) -> tuple[torch.Tensor, int]:
-    """Token ids (cut to MAX_TOKENS) and the first position read: a leading BOS token is skipped, as its residual
-    is an outlier dictionaries are not made for."""
+    """Token ids (cut to MAX_TOKENS) and the first position read. The first token is skipped whether or not it is a
+    BOS token: it is where attention sinks, and its residual is an outlier hundreds of times the usual norm that
+    dictionaries are not made for (models without a BOS token sink on the first word instead)."""
     ids = encode(tok, text, chat)[:MAX_TOKENS]
-    bos = getattr(tok, "bos_token_id", None)
-    return ids, 1 if len(ids) > 1 and bos is not None and int(ids[0]) == bos else 0
+    return ids, 1 if len(ids) > 1 else 0
 
 
 @torch.no_grad()
@@ -433,7 +433,7 @@ def info(model, tok, body: dict) -> dict:
         "mean_active_per_token": round(l0 / max(tokens, 1), 3),
         "features_seen_active": int(seen.sum()),
         "notes": "variance_explained is 1 - |x - reconstruction|^2 / |x - mean|^2 over all tokens read (a leading "
-                 "BOS token is skipped). Losses are mean next-token loss with the layer's residual replaced: by the "
+                 "first token, the attention sink, is skipped). Losses are mean next-token loss with the layer's residual replaced: by the "
                  "reconstruction, by the residual plus an error of the same size in a random direction (control), "
                  "and by zeros. A good fit adds little loss and recovers most of the zero-ablation gap; neutral "
                  "texts only, so a domain the texts don't touch can fit worse.",
