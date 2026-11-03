@@ -253,6 +253,11 @@ class Subject:
             room = gpu_budget if gpu_budget is not None else budget(gpu_fraction)
             if (weight_bytes(path, dtype.itemsize)[1] if Path(path).is_dir() else 0) > room:
                 load_on = "cpu"  # then split across the GPU and the CPU, once its experts are known
+        if device == "cpu" and dtype == torch.bfloat16 and Path(path).is_dir():  # not a model split across a GPU
+            import psutil
+            if weight_bytes(path, 4)[1] < 0.5 * psutil.virtual_memory().available:
+                dtype = torch.float32  # bf16 matrix math on a CPU runs many times slower than float32
+        self.dtype = dtype
         self.spec = spec
         # LLMINSPECT_MODEL_NAME names the model LLMINSPECT_MODEL points at, not one switched to later.
         env_name = os.environ.get("LLMINSPECT_MODEL_NAME") if spec == os.environ.get("LLMINSPECT_MODEL") else None

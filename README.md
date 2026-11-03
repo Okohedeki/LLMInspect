@@ -204,7 +204,11 @@ and reports its measurement beside a control: a random key, direction, vector or
 | Rewrite a fact | locate, edit | Find where a subject's state carries an answer; change it with one rank-one edit |
 | Transplant | plan, carry, direction | Carry a fine-tune's difference, or a direction, from another model |
 | Shrink | profile, prune | Measure which heads, neurons and experts your prompts use; prune the rest, beside random pruning |
-| Cap | calibrate, test | Keep a direction within its range on ordinary text while something pushes it |
+| Cap | calibrate, test, keep | Keep a direction within its range on ordinary text while something pushes it; keep it on the live model |
+| Persona | vectors, scan, monitor | Trait vectors (evil, sycophancy, hallucination, deception, power-seeking, the default assistant); how far a fine-tune moved along each against its base; each read token by token across a conversation |
+| Traces | diff, steer, tokens | What a narrow fine-tune trained in, from its consistent activation difference with its base on unrelated text, read as tokens and by steering the base with it |
+| Backdoor | probe, scan, search, compare | A generic "about to do the hidden thing" probe; candidate triggers' lift against random strings; a gradient search for short triggers; which only work on the fine-tune |
+| Features | info, read, diff, steer | A sparse dictionary of the residual stream from a local folder: how well it reconstructs, the features on each token, which fire differently from the base, steering one |
 
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).
