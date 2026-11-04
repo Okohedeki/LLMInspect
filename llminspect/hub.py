@@ -63,6 +63,8 @@ WRITER = re.compile(r"layers?\.(\d+)\.(mlp\.down_proj|feed_forward\.w2|mlp\.shar
                     r"self_attn\.o_proj)\.weight$")
 TEXT = {".json", ".jinja", ".py", ".txt", ".model", ".yaml", ".yml"}
 RELATIONS = ("finetune", "adapter", "merge", "quantized")
+TMP = Path(tempfile.gettempdir()) / "llminspect-hub"  # where small files read from the Hub are put
+PUBLIC = False      # set by the public app: only Hub repos, never a local path, and never a gated repo
 PICKLES = 16        # pickle files of one repo parsed by range; the rest are listed as unread
 BLOCK = 1 << 18     # a remote pickle file is read in blocks of this size
 PICKLE_BUDGET = 32 << 20  # and never more than this from one file
@@ -173,6 +175,8 @@ class Hub:
             info = HfApi(token=token).model_info(repo, revision=revision, files_metadata=True)
         except Exception as exc:  # noqa: BLE001  not found, gated, offline: all mean it can't be read
             raise Unreachable(f"{repo}: {type(exc).__name__}: {str(exc).splitlines()[0][:200]}") from exc
+        if PUBLIC and getattr(info, "gated", False):
+            raise Unreachable(f"{repo}: gated on the Hub; run LLMInspect yourself, logged in, to read it")
         self.name, self.sha = info.id, info.sha
         self.url = f"{self.endpoint}/{info.id}"
         self._sizes = {s.rfilename: s.size or 0 for s in info.siblings or []}
@@ -267,7 +271,8 @@ class Hub:
     def small_files(self) -> Path:
         """Configs, code and templates, copied to a temporary folder."""
         if self._dir is None:
-            self._dir = Path(tempfile.mkdtemp(prefix="llminspect-hub-"))
+            TMP.mkdir(parents=True, exist_ok=True)
+            self._dir = Path(tempfile.mkdtemp(prefix="hub-", dir=TMP))
             want = [f for f, size in self._sizes.items() if Path(f).suffix.lower() in TEXT and size <= SMALL]
             with ThreadPoolExecutor(WORKERS) as ex:
                 for f, data in zip(want, ex.map(lambda f: self._range(f, 0, max(1, self._sizes[f])), want)):
@@ -275,6 +280,20 @@ class Hub:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(data)
         return self._dir
+
+
+def prune(older: float = 600) -> int:
+    """Remove the temporary folders of reads that ended more than `older` seconds ago; how many went."""
+    import shutil
+    gone, now = 0, time.time()
+    for d in TMP.glob("*") if TMP.is_dir() else []:
+        try:
+            if now - d.stat().st_mtime > older:
+                shutil.rmtree(d, ignore_errors=True)
+                gone += 1
+        except OSError:
+            continue
+    return gone
 
 
 def _claims(base_model, tags: list[str]) -> list[dict]:
@@ -320,6 +339,8 @@ def _remote_signature(src) -> dict:
 
 def open_model(model: str, local: dict[str, Path] | None = None):
     """A source for a model: a folder path, a model on this machine by its Hub name, or the Hub."""
+    if PUBLIC:
+        return Hub(model, token=os.environ.get("HF_TOKEN"))
     p = Path(model).expanduser()
     if p.is_dir():
         return Folder(p)
@@ -557,7 +578,7 @@ def _hub_candidates(cand, say) -> list[str]:
         for m in clean + [m for m in found if m not in clean]:
             ids = [m.id] + [t.split(":")[-1] for t in (m.tags or []) if t.startswith("base_model:") and t.count(":") >= 2]
             for i in ids:
-                if i.lower() not in seen and not (m.gated and i == m.id and not os.environ.get("HF_TOKEN")):
+                if i.lower() not in seen and not (m.gated and i == m.id and (PUBLIC or not os.environ.get("HF_TOKEN"))):
                     seen.add(i.lower())
                     out.append(i)
         if len(out) >= CANDIDATES:
@@ -730,7 +751,8 @@ def _files(cand, parent) -> dict:
         findings += [asdict(x) for k, v in g.meta.items() if k.startswith("tokenizer.chat_template") and isinstance(v, str)
                      for x in filescan.template_findings(g.files[0], k, v)]
     if g and isinstance(g.meta.get("tokenizer.chat_template"), str) and not filediff.templates(mine):
-        mine = Path(tempfile.mkdtemp(prefix="llminspect-gguf-"))  # a GGUF file carries its template inside
+        TMP.mkdir(parents=True, exist_ok=True)
+        mine = Path(tempfile.mkdtemp(prefix="gguf-", dir=TMP))  # a GGUF file carries its template inside
         (mine / "tokenizer_config.json").write_text(json.dumps({"chat_template": g.meta["tokenizer.chat_template"]}),
                                                      encoding="utf-8")
     template = filediff.compare_templates(parent.small_files(), mine) if parent else []

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLMInspect: what is this model, really?</title>
+  <meta name="description" content="Name any Hugging Face model's real parent and what was done to it, and scan the Hub for models that run code on load, claim a false parent or had a direction removed. Nothing is downloaded.">
+  <!--meta-->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body class="public" data-public="1" data-unmask="">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="LLMInspect home">
+      <svg class="logo" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs>
+        <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#lg)"/>
+        <path d="M8 21 L14 11 L19 18 L24 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="8" cy="21" r="2.3" fill="#fff"/><circle cx="14" cy="11" r="2.3" fill="#fff"/><circle cx="19" cy="18" r="2.3" fill="#fff"/><circle cx="24" cy="9" r="2.3" fill="#fff"/>
+      </svg>
+      <span class="wordmark">LLMInspect</span>
+    </a>
+    <nav class="verbs pub-tabs" aria-label="Screens">
+      <button type="button" class="verb on" data-show="unmask" aria-pressed="true">Unmask a model</button>
+      <button type="button" class="verb" data-show="sweep" aria-pressed="false">Sweep the Hub</button>
+    </nav>
+    <span class="pub-note">Read from the Hub by byte range. Nothing is downloaded or run.</span>
+    <button class="icon-btn" id="theme-toggle" aria-label="Switch light or dark theme" title="Theme">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.5v10a5 5 0 0 1 0-10z" fill="currentColor"/></svg>
+    </button>
+  </header>
+
+  <main class="gv unmask" id="view-unmask">
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="unmask" aria-label="Actions in Unmask"></div>
+    <div class="um-stage">
+      <div class="um-wrap">
+        <form class="um-form" id="um-form" role="search" aria-label="Model to unmask">
+          <input id="um-input" class="um-input" placeholder="org/model on the Hugging Face Hub (safetensors or GGUF), or a folder" autocomplete="off" spellcheck="false" aria-label="Model id or folder">
+          <button type="submit" class="um-go" id="um-go">Unmask</button>
+        </form>
+        <div class="um-recent" id="um-recent" aria-label="Read before"></div>
+        <canvas id="um-card" class="um-card" width="2400" height="1260" role="img" aria-label="Unmask card"></canvas>
+        <div class="um-share" id="um-share" hidden>
+          <button type="button" class="tbtn" id="um-save">Save image</button>
+          <button type="button" class="tbtn" id="um-copy">Copy summary</button>
+          <span class="um-note">Read by byte range: weights are fingerprinted and a few rows compared with the parent. Behavior isn't run.</span>
+        </div>
+        <div class="um-details" id="um-details" aria-live="polite"></div>
+      </div>
+    </div>
+    </div>
+  </main>
+
+
+  <main class="gv sweep" id="view-sweep" hidden>
+    <div class="gv-main">
+    <div class="act-bar glass" data-bar="sweep" aria-label="Actions in Sweep"></div>
+    <div class="sw-stage" id="sw-stage">
+      <div class="sw-wrap">
+        <form class="sw-form" id="sw-form" role="search" aria-label="Models to sweep">
+          <input id="sw-search" class="um-input" placeholder="search the Hub: abliterated, uncensored, a model family…" autocomplete="off" spellcheck="false" aria-label="Search text">
+          <input id="sw-author" class="um-input sw-small" placeholder="author" autocomplete="off" spellcheck="false" aria-label="Author">
+          <input id="sw-tag" class="um-input sw-small" placeholder="tag" autocomplete="off" spellcheck="false" aria-label="Tag">
+          <select id="sw-sort" class="um-input sw-small" aria-label="Sort by">
+            <option value="downloads">most downloaded</option><option value="trending_score">trending</option>
+            <option value="last_modified">recently updated</option><option value="created_at">newest</option><option value="likes">most liked</option>
+          </select>
+          <input id="sw-limit" class="um-input sw-num" type="number" min="1" max="500" value="50" aria-label="How many models">
+          <label class="sw-check"><input type="checkbox" id="sw-weights"> weights too</label>
+          <button type="submit" class="um-go">Sweep</button>
+        </form>
+        <div class="um-recent" id="sw-history" aria-label="Sweeps run before"></div>
+        <div class="sw-head" id="sw-head" aria-live="polite"></div>
+        <div class="sw-counts" id="sw-counts"></div>
+        <canvas id="sw-field" class="sw-field" role="img" aria-label="One tile per model checked, lit by its most serious risk. Click a tile to unmask it."></canvas>
+        <div class="gv-tip tooltip sw-tip" id="sw-tip" hidden></div>
+        <div class="sw-flagged" id="sw-flagged"></div>
+      </div>
+    </div>
+    </div>
+  </main>
+
+
+  <footer class="notice">
+    LLMInspect reports what it measured, with its evidence, and what it didn't check. A model with no finding only
+    passed these checks; nothing here says a model is safe.
+  </footer>
+  <script type="module" src="/ui/actionbar.js"></script>
+  <script type="module" src="/ui/unmask.js"></script>
+  <script type="module" src="/ui/sweep.js"></script>
+  <script type="module" src="/ui/public.js"></script>
+</body>
+</html>

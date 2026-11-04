@@ -1651,3 +1651,15 @@ td.still { color: var(--critical); }
   .sw-form #sw-search { flex: 1 1 100%; }
   .lab-stage { flex: none; }
 }
+
+/* ---- the public page (ui/public.html): two screens and a note ---- */
+body.public .brand { color: inherit; text-decoration: none; }
+.pub-note { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+.sw-link { color: #f4f5f8; }
+@media (max-width: 720px) { .pub-note { display: none; } }
+
+/* ---- the public page (ui/public.html): two screens and a note ---- */
+body.public .brand { color: inherit; text-decoration: none; }
+.pub-note { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+.sw-link { color: #f4f5f8; }
+@media (max-width: 720px) { .pub-note { display: none; } }

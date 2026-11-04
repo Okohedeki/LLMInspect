@@ -78,6 +78,7 @@ def check(model: str, weights: bool = False, roots=None) -> dict:
     except Exception as exc:  # noqa: BLE001  one broken repo must not stop a sweep of hundreds
         return {"model": model, "error": f"{type(exc).__name__}: {str(exc)[:300]}", "risks": [],
                 "checked_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    hub.prune()  # the small files this model's read left behind
     rs = risks(r)
     return {"model": r["model"], "sha": r.get("sha"), "top": rs[0]["risk"] if rs else None, "risks": rs,
             "headline": r.get("headline"), "weights": weights, "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -141,7 +142,7 @@ JOBS: dict[str, dict] = {}
 
 
 def start(folder: Path, search=None, author=None, tags=None, sort="downloads", limit=50, models=None,
-          weights=False) -> dict:
+          weights=False, roots=None) -> dict:
     """Run a sweep in the background into folder/<id>.jsonl; its job (JOBS[id]) shows progress and the summary."""
     import uuid
     folder.mkdir(parents=True, exist_ok=True)
@@ -163,7 +164,7 @@ def start(folder: Path, search=None, author=None, tags=None, sort="downloads", l
                 hit = re.match(r"\[sweep\] (\d+)/\d+ (.*)", m)
                 if hit:
                     job["done"], job["last"] = int(hit.group(1)), hit.group(2)
-            job["summary"] = sweep(ids, folder / f"{jid}.jsonl", weights, say=say)
+            job["summary"] = sweep(ids, folder / f"{jid}.jsonl", weights, roots=roots, say=say)
             job["status"] = "ready"
         except Exception as exc:  # noqa: BLE001  the job says why it stopped
             job["status"], job["error"] = "error", f"{type(exc).__name__}: {exc}"

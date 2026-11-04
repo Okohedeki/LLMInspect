@@ -213,6 +213,22 @@ and reports its measurement beside a control: a random key, direction, vector or
 Press `?` for a guide to every action and tool. Press `Ctrl+K` to search for any action or tool and
 run it. The deploy scan is in Tune, under Compare checkpoints, and in the API (below).
 
+## Public mode
+
+`llminspect/public.py` is the Hub scanner as a web app anyone can open: Unmask and Sweep only, with no model loaded
+and no GPU. Nothing in it reads a local folder, loads a model or writes outside its data folder. Only Hugging Face
+model ids are accepted, gated repos are refused even when the host has a token, sweeps are capped (50 models, 12
+with weights), and each client is rate limited. A link to `/m/ORG/NAME` opens that model's card, with a preview
+image drawn on the server for link previews; `/r/ID` is a sweep's report page.
+
+```bash
+docker build -t llminspect-public .
+docker run -p 7860:7860 -e HF_TOKEN=hf_... llminspect-public    # then open http://localhost:7860
+```
+
+Without Docker: `pip install -r requirements-public.txt`, then `uvicorn llminspect.public:app --port 7860` (any OS).
+`deploy/space/README.md` is the header a Hugging Face Space needs to run the same image.
+
 ## Run it
 
 LLMInspect is written for an NVIDIA GPU. Platform support:

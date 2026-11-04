@@ -18,6 +18,7 @@ const C = { bg: "#07080d", ink: "#f4f5f8", ink2: "#a9afbf", muted: "#666d80", fa
   teal: "#22c7d6", amber: "#f5a524", red: "#f05252", violet: "#8b7dff" };
 const U = { model: "", r: null, state: "empty", error: "", t0: 0, raf: 0, recent: [] };
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const PUBLIC = !!document.body.dataset.public;  // the public page (llminspect/public.py)
 
 try { U.recent = JSON.parse(localStorage.getItem(KEEP) || "[]"); } catch { U.recent = []; }
 const keep = () => { try { localStorage.setItem(KEEP, JSON.stringify(U.recent.slice(0, 6))); } catch { /* storage unavailable */ } };
@@ -357,6 +358,7 @@ async function run(model) {
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error(body?.detail || `${res.status}`);
     Object.assign(U, { r: body, state: "done" });
+    if (PUBLIC) history.replaceState(null, "", `/m/${model}`);  // the address is the link to share
     U.recent = [model, ...U.recent.filter((m) => m !== model)];
     keep(); recent();
   } catch (err) {
@@ -380,7 +382,8 @@ function save() {
 
 async function copy() {
   if (!U.r) return;
-  const text = `${U.r.model}: ${U.r.headline}${U.r.url ? `\n${U.r.url}` : ""}`;
+  const link = PUBLIC ? `${location.origin}/m/${U.r.model}` : U.r.url;
+  const text = `${U.r.model}: ${U.r.headline}${link ? `\n${link}` : ""}`;
   try { await navigator.clipboard.writeText(text); noteBar("unmask", "Copied"); } catch { noteBar("unmask", "Couldn't copy"); }
 }
 
@@ -404,5 +407,6 @@ function boot() {
     ],
   });
   $("#um-input").addEventListener("input", () => refreshBar("unmask"));
+  if (document.body.dataset.unmask) run(document.body.dataset.unmask);  // a shared /m/ORG/NAME link
 }
 boot();

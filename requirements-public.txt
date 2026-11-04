@@ -1,0 +1,7 @@
+# The public Hub scanner (llminspect/public.py): no torch, no model, CPU only.
+fastapi==0.143.3
+uvicorn==0.54.0
+httpx==0.28.1
+huggingface_hub==2.2.0
+numpy==2.5.4
+pillow==13.0.0

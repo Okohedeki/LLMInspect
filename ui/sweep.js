@@ -128,7 +128,8 @@ function render() {
   const flagged = s ? s.flagged.length : list.filter((r) => r.risks?.length).length;
   $("#sw-head").innerHTML = !S.id ? `<h2 class="sw-title">Sweep the Hub</h2><p class="sw-sub">Pick models by search, author or tag. Each one's pickles, configs and templates are read by byte range; nothing is downloaded or run.</p>`
     : `<h2 class="sw-title">${running ? `Checking ${job.done || 0} of ${job.total ?? "…"}` : `${list.length} models checked`}${flagged ? `, <span class="sw-hot">${flagged} flagged</span>` : ""}</h2>
-       <p class="sw-sub">${job?.error ? `Stopped: ${esc(job.error)}` : running && job.last ? `Last: ${esc(job.last)}` : s ? `Not checked: ${esc(s.not_checked.join("; "))}.` : ""}</p>`;
+       <p class="sw-sub">${job?.error ? `Stopped: ${esc(job.error)}` : running && job.last ? `Last: ${esc(job.last)}` : s ? `Not checked: ${esc(s.not_checked.join("; "))}.` : ""}</p>
+       ${document.body.dataset.public && !running && S.id ? `<p class="sw-sub"><a class="sw-link" href="/r/${encodeURIComponent(S.id)}" target="_blank" rel="noopener">Open this sweep as a page to share →</a></p>` : ""}`;
   const counts = s?.counts || {};
   $("#sw-counts").innerHTML = Object.entries(RISK).map(([k, v]) => {
     const n = counts[k] ?? list.filter((r) => (r.risks || []).some((x) => x.risk === k)).length;

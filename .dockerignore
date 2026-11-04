@@ -1,0 +1,10 @@
+.git
+tests
+runs
+data
+demo
+scripts
+deploy
+**/__pycache__
+*.env
+llminspect.env
