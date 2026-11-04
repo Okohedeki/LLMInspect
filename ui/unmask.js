@@ -238,8 +238,9 @@ function layers(ctx, r, top, phase) {
     ctx.shadowBlur = 0;
     if (r && rank.few.includes(l)) dots.push([cx, base - h - 12]);
   }
+  const same = r && r.edit.kind === "direction_removed" && (rank.shared ?? 0) >= 0.8;  // one direction shared, not one per layer
   if (dots.length) {
-    if (r.edit.kind === "direction_removed" && dots.length > 1) {  // the same directions through every edited layer
+    if (same && dots.length > 1) {  // the same directions through every edited layer
       ctx.strokeStyle = "#fff4d6"; ctx.lineWidth = 1.5; ctx.shadowColor = C.amber; ctx.shadowBlur = 10;
       ctx.beginPath(); ctx.moveTo(...dots[0]);
       for (let i = 1; i < dots.length; i++) {
@@ -255,7 +256,7 @@ function layers(ctx, r, top, phase) {
     ctx.fillText("L0", x0, base + 18); ctx.textAlign = "right"; ctx.fillText(`L${ids[n - 1] ?? n - 1}`, x1, base + 18);
     if (dots.length) {
       ctx.textAlign = "center"; ctx.fillStyle = C.ink2;
-      const shared = r.edit.kind === "direction_removed" ? `, the same in each (overlap ${(rank.shared ?? 0).toFixed(2)})` : "";
+      const shared = same ? `, the same in each (overlap ${(rank.shared ?? 0).toFixed(2)})` : r.edit.kind === "direction_removed" ? ", a different one in each" : "";
       const ks = rank.few.map((l) => rank.layers[l]?.k || 1);
       const howMany = Math.max(...ks) === 1 ? "one direction" : `${Math.min(...ks)}–${Math.max(...ks)} directions`.replace(/^(\d)–\1 /, "$1 ");
       ctx.fillText(`● sampled layers whose change lies in ${howMany}${shared}`, W / 2, base + 18);

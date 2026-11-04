@@ -39,6 +39,27 @@ def remove_two_directions(m):
         w.sub_(q @ (q.T @ w))
 
 
+def remove_a_direction_per_layer(m):
+    for layer in m.model.layers:
+        r = torch.randn(m.config.hidden_size)
+        r /= r.norm()
+        w = layer.mlp.down_proj.weight
+        w.sub_(torch.outer(r, r @ w))
+
+
+def one_rank_one_edit(m):
+    w = m.model.layers[2].mlp.down_proj.weight
+    w.add_(torch.outer(torch.randn(w.shape[0]), torch.randn(w.shape[1])) * w.std())
+
+
+def test_per_layer_directions_are_abliteration_and_one_layer_is_a_targeted_edit(tmp_path):
+    roots, base = setup(tmp_path)
+    per = hub.unmask(str(edited(base, tmp_path / "per", remove_a_direction_per_layer)), roots=roots)
+    assert per["edit"]["kind"] == "direction_removed" and "per-layer directions" in per["edit"]["headline"]
+    one = hub.unmask(str(edited(base, tmp_path / "one", one_rank_one_edit)), roots=roots)
+    assert one["edit"]["kind"] == "rank_one" and one["edit"]["moved_layers"] == [2]
+
+
 def add_low_rank(m):
     for i in (1, 2):
         w = m.model.layers[i].mlp.down_proj.weight

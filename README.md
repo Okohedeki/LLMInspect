@@ -1,14 +1,45 @@
 # LLMInspect
 
-Model assurance for open-weights language models: look inside a model, change it, and gather evidence
-about what a change did, for alignment, safety and security work.
+**What is this model, really?** Name any open-weights model on the Hugging Face Hub, and LLMInspect tells you
+what it was made from and what was done to it: a removed refusal direction, a few rank-one edits, a merged
+adapter, a full fine-tune, a parent claim that doesn't hold up, or files that run code when you load them.
+It reads a few megabytes of the model by byte range. Nothing is downloaded, loaded or run, and no GPU is needed.
 
-LLMInspect runs a model behind an OpenAI-compatible endpoint, so any chat client or agent harness can
-use it as a drop-in model. While the model works, LLMInspect records what happens inside it on every
-token. You can then see why it wrote what it wrote, steer it while it runs, edit its weights, and
-check a checkpoint someone hands you against the model it claims to be.
+![An unmask result: a 27B GGUF read as its Qwen parent with one direction removed from 24 of 31 layers](docs/unmask-card.png)
+
+Point it at a whole slice of the Hub (a search, an author, a tag) and it sweeps them all, one line per
+model, flagged ones first.
+
+Every result is evidence with its method and limits attached, never a verdict. A model with no finding only
+passed these checks; it is not shown to be safe.
+
+## Try it in a minute (any OS, CPU only)
+
+```bash
+git clone https://github.com/Okohedeki/LLMInspect && cd LLMInspect
+pip install -r requirements-public.txt
+python -m llminspect.hub ORG/NAME                                    # unmask one Hub model
+python -m llminspect.sweep --search abliterated --limit 20 --weights --report sweep.html
+```
+
+Or run the same checks as a web app, with a shareable page per model (`/m/ORG/NAME`):
+
+```bash
+docker build -t llminspect-public . && docker run -p 7860:7860 llminspect-public   # http://localhost:7860
+```
+
+Set `HF_TOKEN` for higher Hub rate limits and gated parents; the token is sent to the Hub only.
+
+## Beyond the Hub scan
+
+The full tool runs a model behind an OpenAI-compatible endpoint, so any chat client or agent harness can
+use it as a drop-in model, and records what happens inside it on every token. You can then see why it
+wrote what it wrote, steer it while it runs, edit its weights, run the verbs below (sign, harden, audit,
+backdoor search and more), and check a checkpoint someone hands you against the model it claims to be.
+That part wants an NVIDIA GPU; see [Run it](#run-it).
 
 LLMInspect is a port of [Brainscan](https://github.com/Okohedeki/brainscan), the project's earlier repository.
+Licensed under [Apache-2.0](LICENSE). To report a vulnerability in LLMInspect itself, see [SECURITY.md](SECURITY.md).
 
 ## What it is for
 
@@ -19,9 +50,6 @@ LLMInspect is a port of [Brainscan](https://github.com/Okohedeki/brainscan), the
 - **Security.** Before deploying a checkpoint, compare it with its base model: which weights changed,
   whether its files match a manifest, whether single tokens shift its predictions, and whether it
   reproduces secrets you planted in training data.
-
-Every result is evidence with its method and limits attached, never a verdict. A clean scan does not
-show that a model is safe.
 
 ## Check a model before you run it
 
@@ -227,7 +255,6 @@ docker run -p 7860:7860 -e HF_TOKEN=hf_... llminspect-public    # then open http
 ```
 
 Without Docker: `pip install -r requirements-public.txt`, then `uvicorn llminspect.public:app --port 7860` (any OS).
-`deploy/space/README.md` is the header a Hugging Face Space needs to run the same image.
 
 ## Run it
 

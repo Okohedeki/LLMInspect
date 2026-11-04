@@ -1,5 +1,5 @@
 # The public Hub scanner: Unmask and Sweep as a web app (llminspect/public.py). No model is loaded and no GPU is
-# needed; Hub repos are read by byte range. Runs as uid 1000 on port 7860, as Hugging Face Spaces expect.
+# needed; Hub repos are read by byte range. Runs as an unprivileged user (uid 1000) on port 7860.
 #   docker build -t llminspect-public .
 #   docker run -p 7860:7860 -e HF_TOKEN=hf_... llminspect-public
 FROM python:3.12-slim

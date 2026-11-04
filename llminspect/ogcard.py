@@ -53,7 +53,7 @@ def _wrap(draw, spans, fnt, width: int, max_lines: int) -> list[list[tuple[str, 
     space = draw.textlength(" ", font=fnt)
     for w, c in words:
         size = draw.textlength(w, font=fnt)
-        if line and used + space + size > width:
+        if line and used + space + size > width and w[:1] not in ".,;:":  # punctuation never starts a line
             lines.append(line)
             line, used = [], 0
         line.append((w, c))

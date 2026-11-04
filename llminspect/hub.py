@@ -502,6 +502,12 @@ def _name_edit(sim: dict, change: dict) -> dict:
         k = int(np.median([per[str(l)]["k"] for l in few]))
         what = "one direction" if k == 1 else f"{k} directions"
         kind, head = "direction_removed", f"{what} removed from {len(moved) or many} of {of}, the signature of abliteration"
+    elif many and len(one) >= 0.6 * many and len(moved) >= 0.5 * (len(per) if quant else len(
+            [l for l in sim["layers"] if int(l) >= 0])):  # read layers of a GGUF are a sample of all; else moved ones
+        # rank one in most of the model's layers, each in its own direction: abliteration that takes a separate
+        # direction per layer. Targeted fact edits touch a handful of layers.
+        kind, head = "direction_removed", (f"a different direction removed from each of {len(moved) or many} of {of}, "
+                                           "the signature of abliteration with per-layer directions")
     elif many and len(one) >= 0.6 * many:
         kind, head = "rank_one", f"separate rank-one edits in {span}, like targeted fact edits"
     elif many and all(p[f"top{LOW_K}"] is not None and p[f"top{LOW_K}"] >= LOW_RANK for p in per.values() if p["rel"] > 0):
