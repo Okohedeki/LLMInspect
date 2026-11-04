@@ -79,6 +79,16 @@ def test_a_sweep_ranks_risks_and_resumes(tmp_path):
     assert again == s and len(out.read_text().splitlines()) == 2 and "0 to check" in seen[-1]
 
 
+def test_a_model_with_no_parent_is_not_called_clean(tmp_path):
+    lone = tiny(tmp_path / "lone")
+    (tmp_path / "empty").mkdir()
+    seen = []
+    s = sweep.sweep([str(lone)], tmp_path / "s.jsonl", weights=True, roots=[tmp_path / "empty"], say=seen.append)
+    assert s["uncompared"] == 1 and s["flagged"] == [] and "weights not compared" in seen[-1]
+    page = sweep.report(s, list(sweep.done(tmp_path / "s.jsonl").values()))
+    assert "1 more had no parent" in page
+
+
 def test_an_unreadable_model_is_a_row_not_a_crash(tmp_path):
     s = sweep.sweep([str(tmp_path / "missing")], tmp_path / "s.jsonl")
     assert s["errors"] == 1 and s["flagged"] == []

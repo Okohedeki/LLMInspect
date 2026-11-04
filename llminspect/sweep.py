@@ -81,7 +81,9 @@ def check(model: str, weights: bool = False, roots=None) -> dict:
     hub.prune()  # the small files this model's read left behind
     rs = risks(r)
     return {"model": r["model"], "sha": r.get("sha"), "top": rs[0]["risk"] if rs else None, "risks": rs,
-            "headline": r.get("headline"), "weights": weights, "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "headline": r.get("headline"), "weights": weights,
+            "uncompared": bool(weights and not r.get("parent")),  # no parent found, so its weights weren't compared
+            "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "result": r}
 
 
@@ -117,7 +119,8 @@ def sweep(models: list[str], out: Path | None = None, weights: bool = False, wor
             if out:
                 with out.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(row) + "\n")
-            mark = row.get("error") or row["top"] or "no risk found"
+            mark = row.get("error") or row["top"] or (
+                "no risk in its files; weights not compared (no parent found)" if row.get("uncompared") else "no risk found")
             say(f"[sweep] {count[0]}/{len(todo)} {m}: {mark}")
 
     with ThreadPoolExecutor(workers) as ex:
@@ -130,6 +133,7 @@ def summary(rows: list[dict]) -> dict:
     order = {k: i for i, k in enumerate(RISKS)}
     flagged = sorted((r for r in rows if r.get("risks")), key=lambda r: (order[r["top"]], r["model"]))
     return {"models": len(rows), "errors": sum(1 for r in rows if "error" in r),
+            "uncompared": sum(1 for r in rows if r.get("uncompared") and not r.get("risks")),
             "counts": {k: sum(1 for r in rows if any(x["risk"] == k for x in r.get("risks", []))) for k in RISKS},
             "flagged": [{"model": r["model"], "top": r["top"], "risks": r["risks"], "headline": r.get("headline")}
                         for r in flagged],
@@ -189,7 +193,7 @@ def load(folder: Path, jid: str) -> dict:
     if not path.exists():
         raise FileNotFoundError(jid)
     rows = list(done(path).values())
-    slim = [{k: r.get(k) for k in ("model", "top", "risks", "headline", "error", "weights", "checked_at")} |
+    slim = [{k: r.get(k) for k in ("model", "top", "risks", "headline", "error", "weights", "uncompared", "checked_at")} |
             {"edit": ((r.get("result") or {}).get("edit") or {}).get("kind"),
              "parent": ((r.get("result") or {}).get("parent") or {}).get("model"),
              "formats": ((r.get("result") or {}).get("files") or {}).get("formats")} for r in rows]
@@ -223,7 +227,7 @@ h1{{font-size:32px;margin:0 0 4px}}p{{color:#a9afbf}}.n{{display:flex;flex-wrap:
 table{{border-collapse:collapse;width:100%;font-size:13px}}td{{padding:8px 10px;border-top:1px solid #1b1f2b;vertical-align:top}}
 td:first-child{{font-family:ui-monospace,monospace}}a{{color:#e7e9ef}}footer{{margin-top:32px;color:#6b7385;font-size:12px}}
 </style></head><body><main><h1>{title}</h1>
-<p>{s["models"]} models checked without downloading any; {len(s["flagged"])} carry a risk, {s["errors"]} couldn't be read.
+<p>{s["models"]} models checked without downloading any; {len(s["flagged"])} carry a risk, {s["errors"]} couldn't be read{f", and {s['uncompared']} more had no parent to compare their weights with" if s.get("uncompared") else ""}.
 Checked {time.strftime("%Y-%m-%d")} with LLMInspect.</p><div class="n">{counts}</div><div class="f">{tiles}</div>
 <table>{flagged}</table><footer>A risk is a fact about a model's files or weights, with its evidence; a model with no risk only
 passed these checks. Not checked: {escape("; ".join(s["not_checked"]))}.</footer></main></body></html>"""
@@ -255,7 +259,8 @@ def main(argv=None) -> None:
     if args.json:
         print(json.dumps(s, indent=1))
         return
-    print(f"{s['models']} models checked, {len(s['flagged'])} with a risk, {s['errors']} unreadable")
+    print(f"{s['models']} models checked, {len(s['flagged'])} with a risk, {s['errors']} unreadable"
+          + (f", {s['uncompared']} with no parent to compare weights with" if s.get("uncompared") else ""))
     for k, n in s["counts"].items():
         if n:
             print(f"  {n:4d}  {k}")

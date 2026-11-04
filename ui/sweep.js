@@ -134,7 +134,8 @@ function render() {
   $("#sw-counts").innerHTML = Object.entries(RISK).map(([k, v]) => {
     const n = counts[k] ?? list.filter((r) => (r.risks || []).some((x) => x.risk === k)).length;
     return n ? `<div class="sw-count ${v.tone}"><b>${n}</b><span>${esc(v.short)}</span></div>` : "";
-  }).join("") + (list.length ? `<div class="sw-count none"><b>${list.filter((r) => !r.risks?.length && !r.error).length}</b><span>no risk found</span></div>` : "");
+  }).join("") + (list.length ? `<div class="sw-count none"><b>${list.filter((r) => !r.risks?.length && !r.error && !r.uncompared).length}</b><span>no risk found</span></div>` : "")
+    + (list.some((r) => r.uncompared && !r.risks?.length) ? `<div class="sw-count none"><b>${list.filter((r) => r.uncompared && !r.risks?.length).length}</b><span>no parent to compare</span></div>` : "");
   const shown = list.filter((r) => r.risks?.length).sort((a, b) => Object.keys(RISK).indexOf(a.top) - Object.keys(RISK).indexOf(b.top));
   $("#sw-flagged").innerHTML = shown.length ? `<h3>Flagged</h3><ol class="sw-list">${shown.map((r) => `
     <li><button type="button" class="sw-row" data-model="${esc(r.model)}" title="Open in Unmask">
@@ -160,7 +161,7 @@ function hover(ev) {
   const r = S.tiles[i].r;
   tip.innerHTML = `<b>${esc(r.model)}</b><br>${r.error ? esc(r.error) : r.risks?.length
     ? r.risks.slice(0, 3).map((x) => `<span class="sw-dot ${RISK[x.risk]?.tone || "muted"}"></span>${esc(RISK[x.risk]?.short || x.risk)}: ${esc(x.what)}`).join("<br>")
-    : "no risk found by these checks"}${r.headline ? `<br><span class="dim">${esc(r.headline)}</span>` : ""}`;
+    : r.uncompared ? "no risk in its files; its weights weren't compared (no parent found)" : "no risk found by these checks"}${r.headline ? `<br><span class="dim">${esc(r.headline)}</span>` : ""}`;
   const box = $("#sw-stage").getBoundingClientRect();
   tip.style.left = `${Math.min(ev.clientX - box.left + 14, box.width - 340)}px`;
   tip.style.top = `${ev.clientY - box.top + 14}px`;
